@@ -54,9 +54,10 @@ preview generation remains available when ads are unavailable. For production,
 build/sign a release and confirm its merged manifest and ad-unit selection.
 Do not click live ads for testing.
 
-**Validation status:** Rust desktop checks do not compile Kotlin or validate
-Android packaging. This checkout has no Android SDK, NDK, Java toolchain or
-device configured; an APK build and device acceptance testing remain pending.
+**Validation status:** GitHub Actions successfully compiled the Rust/Kotlin
+app and packaged the ARM64 debug-signed APK for the v0.1.1 prerelease. This
+Windows checkout still has no Android toolchain or device configured. Device
+acceptance tests, production signing and store distribution remain pending.
 
 ## Required publisher setup before publishing
 

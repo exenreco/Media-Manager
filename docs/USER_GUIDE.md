@@ -19,10 +19,10 @@ It is an initial migration milestone, **not a completed five-platform release**.
 | Platform | Local library | Remote library | Validation in this workspace |
 | --- | --- | --- | --- |
 | Windows | Implemented | Implemented | Workspace compilation and backend tests pass |
-| macOS | Implemented in shared source | Implemented | Requires build and testing on a Mac |
-| Linux | Implemented in shared source | Implemented | Requires build and testing on Linux |
-| Android | **Pending native folder/document bridge** | Implemented in shared source | Requires Android SDK/NDK, packaging and device tests |
-| iOS | **Pending native document bridge** | Implemented in shared source | Requires macOS/Xcode, signing and device tests |
+| macOS | Implemented in shared source | Implemented | Native ARM64/x64 CI builds/tests pass; UI acceptance pending |
+| Linux | Implemented in shared source | Implemented | Native x64 CI build/tests pass; UI acceptance pending |
+| Android | **Pending native folder/document bridge** | Implemented in shared source | ARM64 preview APK built in CI; device acceptance pending |
+| iOS | **Pending native document bridge** | Implemented in shared source | ARM64 Simulator archive built/signed in CI; device signing/testing pending |
 
 Local mobile mode deliberately reports that document access is unavailable.
 It does not claim to rename arbitrary mobile paths. The requirement is to support

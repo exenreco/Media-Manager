@@ -38,6 +38,10 @@ platform job has not completed successfully; check Actions before downloading.
 The existing Android/iOS source supports remote mode; native local-file providers,
 mobile background jobs and mobile notifications remain unfinished.
 
+The [v0.1.1 prerelease](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.1)
+contains successful native CI builds for all rows above. Mobile device acceptance
+tests and production/store signing are still pending.
+
 ## Build and run
 
 Install stable Rust and the host build tools:

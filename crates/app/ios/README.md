@@ -28,9 +28,11 @@ not a replacement for the app's complete generated plist.
 
 ## Build on a Mac
 
-This checkout is on Windows. **Swift compilation, SDK linking/embedding,
-signing, simulator execution and device validation have not been performed.**
-Rust desktop checks cannot validate those steps.
+This checkout is on Windows. GitHub Actions successfully compiled Rust/Swift,
+embedded the Google SDKs, ad-hoc signed the simulator bundle and verified its
+signatures for the v0.1.1 prerelease. **Simulator UI/device acceptance testing
+and production/device signing remain pending.** Rust desktop checks alone
+cannot validate the native mobile integration.
 
 Install Xcode, its iOS SDK, the required Rust iOS target and Dioxus CLI 0.7.10.
 Use iOS 15 or later. From `crates/app`, build with:
