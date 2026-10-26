@@ -1,8 +1,8 @@
 # Third-party notices
 
 Media Manager's original source and generated branding artwork are distributed
-under the MIT license in LICENSE. Dependencies retain their respective licenses;
-MIT does not relicense third-party libraries, SDKs, artwork or provider data.
+under the Apache License 2.0 in LICENSE. Dependencies retain their respective licenses;
+this license does not relicense third-party libraries, SDKs, artwork or provider data.
 
 - Rust dependency versions and sources are recorded in Cargo.lock. Dioxus,
   Tokio, Axum, reqwest and their dependencies carry their own notices.

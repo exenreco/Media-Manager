@@ -1,19 +1,23 @@
 # Media Manager
 
+<img src="assets/branding/app-icon.png" alt="Media Manager logo" width="128">
+
 A Rust desktop and mobile app for organizing TV shows and movies with a clear,
 reviewable rename preview. Built with Dioxus, with an optional Axum backend for
 controlling a library from another device.
 
 [Releases](https://github.com/exenreco/Media-Manager/releases) ·
 [User guide](docs/USER_GUIDE.md) · [Release guide](docs/RELEASING.md) ·
-[MIT license](LICENSE)
+[Apache 2.0 license](LICENSE)
+
+![Media Manager dashboard](Screenshot.png)
 
 ## Features
 
 - TV-show and movie modes, optional season selection, Plex naming and custom templates.
 - Season tables with missing episodes, filename edits and media playback.
 - Show/season poster previews and optional downloads that preserve existing images.
-- Resizable desktop panels; a gear menu switches panels in narrow windows.
+- Resizable desktop panels; Back/Next steps guide single-column windows through settings, posters and preview.
 - Local libraries or an authenticated remote library server.
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.
@@ -28,15 +32,17 @@ build is not a substitute for native UI and device testing.
 | Windows x64 | Portable ZIP, app and server | Requires Windows native prerequisites and WebView2 |
 | macOS Apple Silicon / Intel | ZIP with app bundle and server | Ad-hoc signed; not Developer ID signed or notarized |
 | Linux x64 | TAR.GZ, app and server | Built on Ubuntu 24.04; requires compatible GTK/WebKitGTK runtime |
-| Android ARM64 | Installable debug-signed preview APK | Test ads; local document access and background execution pending |
+| Android ARM64 | Installable debug-signed preview APK | Test ads; new native folder access awaits device validation; background execution pending |
 | iOS ARM64 Simulator | Simulator app ZIP | For Xcode Simulator, not an installable iPhone IPA; device signing remains pending |
 
 The tag-triggered [release workflow](.github/workflows/release.yml) builds each
 platform on its native host and attaches successful artifacts and SHA-256 checksums
 to a GitHub prerelease. Assets appear as jobs finish. A missing asset means that
 platform job has not completed successfully; check Actions before downloading.
-The existing Android/iOS source supports remote mode; native local-file providers,
-mobile background jobs and mobile notifications remain unfinished.
+The current source adds Android document-tree selection and iOS security-scoped
+folder selection for local previews, renaming, posters and playback. These native
+bridges still require native builds and device validation; v0.1.1 downloads do
+not contain them. Mobile background jobs and notifications remain unfinished.
 
 The [v0.1.1 prerelease](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.1)
 contains successful native CI builds for all rows above. Mobile device acceptance
@@ -104,7 +110,7 @@ Release CI produces mobile previews with test ads, not store-ready releases.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-node --test crates/app/android/tests/native-ad.test.cjs
+node --test crates/app/android/tests/native-ad.test.cjs crates/app/tests/mobile-storage.test.cjs
 python -m unittest discover -s crates/app/ios/tests
 ```
 
@@ -129,6 +135,9 @@ required by the Rust application.
 
 ## License
 
-Original project code and generated branding are licensed under **MIT**.
+Original project code and generated branding are licensed under **Apache 2.0**.
+Commercial use, including ad-supported distribution, is permitted. The license
+includes an explicit patent grant and allows forks and redistribution; it does
+not reserve advertising revenue or exclusive distribution rights to this project.
 Copyright © 2026 Exenreco Bell. Dependencies, Google SDKs and provider artwork
 retain their own terms; see [third-party notices](THIRD_PARTY_NOTICES.md).

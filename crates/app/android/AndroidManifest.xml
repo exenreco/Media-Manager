@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <application android:hasCode="true" android:icon="@mipmap/ic_launcher"
+    <application android:hasCode="true" android:icon="@mipmap/media_manager" android:roundIcon="@mipmap/media_manager"
         android:extractNativeLibs="true" android:allowNativeHeapPointerTagging="false"
         android:label="Media Manager" android:theme="@style/AppTheme"
         android:hardwareAccelerated="true" android:usesCleartextTraffic="false"

@@ -20,6 +20,9 @@ a Kotlin 2.0.20 Gradle plugin dependency. Before building, copy the supplied
 It selects Kotlin Gradle plugin 2.3.20 and migrates the generated JVM-target
 configuration to compilerOptions without disabling metadata checks.
 The release workflow applies this compiler configuration automatically.
+Set `MEDIA_MANAGER_ANDROID_ICONS` to the absolute path of
+`assets/branding/icons/android` before building. The same Gradle init script
+registers these launcher resources; release CI sets the path automatically.
 
 The Rust settings panel reserves an Android-only native ad slot above Build
 rename preview, with 24 CSS pixels between the ad and that action. An
@@ -33,8 +36,10 @@ MediaView and call-to-action; AdChoices is added by Google at top right.
 The native view is visible only when the whole reserved area fits inside the
 viewport and the scrolling settings panel and no app dialog is open. It hides
 on pause. An ad is discarded after one hour and on activity destruction.
-No automatic retry or refresh loop runs. Consent/ad failures collapse the
-slot without disabling library actions. Unsupported WebView message APIs
+No automatic ad-request retry or refresh loop runs. Consent/ad failures collapse
+the slot and show an error status and a user-operated Retry ad button without
+disabling library actions. A valid UMP canRequestAds result may authorize ads
+after a consent-update error, following Google's guidance. Unsupported WebView message APIs
 disable the ad integration. UMP privacy options remain available when required.
 
 ## Build and validate
@@ -81,3 +86,17 @@ References: [SDK setup](https://developers.google.com/admob/android/quick-start)
 [UMP](https://developers.google.com/admob/android/privacy),
 [native policies](https://support.google.com/admob/answer/6329638),
 [AdMob policies](https://support.google.com/admob/answer/6128543).
+
+## Local device libraries
+
+MainActivity also hosts an origin-restricted MediaManagerStorage bridge. It uses
+ACTION_OPEN_DOCUMENT_TREE with persisted read/write grants, queries document
+identifiers through DocumentsContract, and renames through the provider. It
+checks identities, sizes, timestamps and destination conflicts before mutations.
+No broad storage permission is requested. Device/provider validation is pending.
+
+The slot adapts between 380 and 440 CSS pixels. Eligible on-screen slots may
+load before they fit completely, but the native overlay stays hidden until the
+whole slot is visible. Compact layouts omit optional body/advertiser views and
+retain attribution, headline, media, CTA and AdChoices. Bridge readiness is
+retried briefly at mount. SDK failures are logged under MediaManagerAds.

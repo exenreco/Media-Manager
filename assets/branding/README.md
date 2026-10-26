@@ -17,5 +17,8 @@ window for about 2.2 seconds, then restores the normal decorated, resizable
 library window. **Open library →** skips the splash. Transparency depends on
 native desktop compositor support. The existing mobile launch flow is unchanged.
 
-These are source design masters. Platform store icon sets and executable bundle
-resources belong to the pending release-packaging work.
+Native icons are in `icons/`: Android density and adaptive launcher resources,
+an opaque iOS app-icon catalog, and a macOS ICNS. Android's Gradle init script
+registers the resources. The iOS finishing helper compiles its catalog with
+Xcode actool before signing. Desktop packaging copies the ICNS into the macOS
+bundle's Resources directory and registers it in Info.plist.

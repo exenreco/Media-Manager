@@ -5,12 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const script = fs.readFileSync(path.join(__dirname, '../../src/native-ad.js'), 'utf8');
 
-function harness({bridge = true, ios = false} = {}) {
+function harness({bridge = true, ios = false, viewportHeight = 800} = {}) {
   const messages = [], listeners = new Map();
   const rect = {x:10, y:10, top:10, left:10, right:310, bottom:450, width:300, height:440};
   const parentRect = {top:0, left:0, right:400, bottom:800};
   const parent = {parentElement:null, getBoundingClientRect:() => parentRect};
-  const slot = {hidden:false, parentElement:parent, getBoundingClientRect:() => rect};
+  const slot = {style:{},hidden:false, parentElement:parent, getBoundingClientRect:() => rect};
   let modal = false, frame;
   const window = {
     addEventListener:(name, callback) => listeners.set(name, callback),
@@ -21,20 +21,22 @@ function harness({bridge = true, ios = false} = {}) {
     if (ios) window.webkit = {messageHandlers:{MediaManagerAds:handler}};
     else window.MediaManagerAds = handler;
   }
+  const status = {hidden:false,textContent:''}, retry = {hidden:true};
   const document = {
     hidden:false,
-    getElementById:() => slot,
+    getElementById:id => id === 'native-ad-slot' ? slot : id === 'native-ad-status' ? status : id === 'ad-retry' ? retry : {hidden:true},
     querySelector:() => modal ? {} : null,
     addEventListener:(name, callback) => listeners.set(name, callback),
     removeEventListener:name => listeners.delete(name),
   };
-  const context = {window, document, innerWidth:400, innerHeight:800,
+  const context = {window, document, innerWidth:400, innerHeight:viewportHeight,
     getComputedStyle:() => ({overflow:'auto', overflowX:'auto', overflowY:'auto'}),
     requestAnimationFrame:callback => {frame = callback; return 1;},
     cancelAnimationFrame:() => {frame = null;},
   };
   vm.runInNewContext(script, context);
-  return {messages, rect, slot, parentRect, window, document, listeners,
+  return {messages, rect, slot, parentRect, window, document, listeners, status, retry,
+    installBridge:() => { window.MediaManagerAds = {postMessage:value => messages.push(JSON.parse(value))}; },
     tick:() => frame?.(), modal:value => {modal = value;}};
 }
 
@@ -58,12 +60,13 @@ test('hides the native overlay under dialogs, scrolling clips, and backgrounding
 
 test('fails closed without an Android bridge and never forwards ad click events', () => {
   const missing = harness({bridge:false});
+  for(let i=0;i<120;i++) missing.tick();
   assert.equal(missing.slot.hidden, true);
   assert.equal(missing.messages.length, 0);
   const h = harness();
   h.listeners.get('click')({target:{closest:() => null}});
   assert.equal(h.messages.length, 1);
-  h.listeners.get('click')({target:{closest:() => ({})}});
+  h.listeners.get('click')({target:{closest:selector => selector === '#ad-privacy' ? {} : null}});
   assert.equal(h.messages.at(-1).type, 'privacy');
 });
 
@@ -71,8 +74,36 @@ test('uses the iOS WebKit handler for geometry, privacy and teardown', () => {
   const h = harness({ios:true});
   assert.equal(h.messages.at(-1).type, 'bounds');
   assert.equal(h.messages.at(-1).visible, true);
-  h.listeners.get('click')({target:{closest:() => ({})}});
+  h.listeners.get('click')({target:{closest:selector => selector === '#ad-privacy' ? {} : null}});
   assert.equal(h.messages.at(-1).type, 'privacy');
   h.window.mediaManagerAdCleanup();
   assert.equal(h.messages.at(-1).type, 'hide');
+});
+
+test('loads an eligible clipped slot but keeps its native overlay hidden', () => {
+  const h=harness(); h.rect.bottom=850; h.rect.top=410; h.rect.y=410; h.tick();
+  assert.equal(h.messages.at(-1).eligible,true);
+  assert.equal(h.messages.at(-1).visible,false);
+});
+test('waits for a late native bridge instead of permanently hiding the slot', () => {
+  const h=harness({bridge:false}); h.tick(); h.installBridge(); h.tick();
+  assert.equal(h.slot.hidden,false); assert.equal(h.messages.at(-1).eligible,true);
+});
+test('hides ads in a panel switched out of the single-column flow', () => {
+  const h=harness(); h.parentRect.bottom=0; h.tick();
+  assert.equal(h.messages.at(-1).eligible,false); assert.equal(h.messages.at(-1).visible,false);
+});
+
+test('uses a compact slot on a short phone viewport', () => {
+  const h = harness({viewportHeight:600});
+  assert.equal(h.slot.style.height,'380px');
+});
+test('failed requests expose status and retry only when the user asks', () => {
+  const h = harness(); h.slot.hidden=true;
+  h.window.mediaManagerAdStatus('Ad unavailable (code 3).',true);
+  assert.equal(h.status.textContent,'Ad unavailable (code 3).'); assert.equal(h.retry.hidden,false);
+  h.tick(); assert.equal(h.messages.at(-1).eligible,false);
+  assert.equal(h.messages.some(m => m.type==='retry'),false);
+  h.listeners.get('click')({target:{closest:selector => selector === '#ad-retry' ? {} : null}});
+  assert.equal(h.slot.hidden,false); assert.equal(h.messages.at(-1).type,'retry');
 });

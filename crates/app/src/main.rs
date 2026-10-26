@@ -1,6 +1,10 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod ads;
 mod backend;
 mod branding;
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+mod mobile_storage;
 mod notifications;
 mod poster;
 mod preview;
@@ -114,6 +118,14 @@ impl Form {
     }
 }
 
+#[component]
+fn MobileStorageBridge() -> Element {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return rsx! { mobile_storage::Bridge {} };
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    rsx! {}
+}
+
 fn main() {
     #[cfg(all(
         feature = "desktop",
@@ -157,8 +169,7 @@ fn App() -> Element {
     let mut playback_error = use_signal(String::new);
     let mut left_width = use_signal(|| 340.0f64);
     let mut right_width = use_signal(|| 300.0f64);
-    let mut active_panel = use_signal(|| "naming");
-    let mut panel_menu_open = use_signal(|| false);
+    let mut active_panel = use_signal(|| "settings");
     let mut drag = use_signal(|| None::<PanelDrag>);
     let mut splash_visible = use_signal(|| {
         cfg!(all(
@@ -307,7 +318,8 @@ fn App() -> Element {
 
     rsx! {
         style { "{CSS}" }
-        main {
+        if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
+        main { class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
             onpointermove: move |e| {
                 if let Some(start) = drag() {
                     let delta = e.client_coordinates().x - start.x;
@@ -317,36 +329,12 @@ fn App() -> Element {
             },
             onpointerup: move |_| { if drag().is_some() { drag.set(None); } },
             onpointercancel: move |_| drag.set(None),
-            nav { class: "layout-tabs", "aria-label": "Dashboard panels",
-                onkeydown: move |e| { if e.key() == Key::Escape {
-                    panel_menu_open.set(false);
-                    let _ = document::eval("document.getElementById('panel-menu-toggle')?.focus()");
-                } },
-                button { id: "panel-menu-toggle", class: "panel-menu-toggle", r#type: "button", title: "Switch dashboard panel", "aria-label": "Switch dashboard panel",
-                    "aria-controls": "panel-menu", "aria-expanded": panel_menu_open().to_string(), onclick: move |_| panel_menu_open.toggle(),
-                    svg { width: "21", height: "21", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.7", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true",
-                        path { d: "m9.5 3-.5 2a8 8 0 0 0-1.7 1L5.4 5.4 3 9.6 4.5 11a8 8 0 0 0 0 2L3 14.4l2.4 4.2 1.9-.6a8 8 0 0 0 1.7 1l.5 2h5l.5-2a8 8 0 0 0 1.7-1l1.9.6 2.4-4.2-1.5-1.4a8 8 0 0 0 0-2L21 9.6l-2.4-4.2-1.9.6A8 8 0 0 0 15 5l-.5-2h-5Z" }
-                        circle { cx: "12", cy: "12", r: "3" }
-                    }
-                }
-                if panel_menu_open() {
-                    button { class: "panel-menu-dismiss", r#type: "button", tabindex: "-1", "aria-label": "Close panel selector", onclick: move |_| panel_menu_open.set(false) }
-                    div { id: "panel-menu", class: "panel-menu", "aria-label": "Choose dashboard panel",
-                        for (value, title, target) in [("naming", "Naming", "poster-naming-settings"), ("preview", "Preview", "rename-preview"), ("library", "Library & API", "library-settings")] {
-                            button { r#type: "button", "aria-controls": target, "aria-pressed": (active_panel() == value).to_string(), onclick: move |_| {
-                                active_panel.set(value); panel_menu_open.set(false);
-                                let _ = document::eval("document.getElementById('panel-menu-toggle')?.focus()");
-                            }, "{title}" }
-                        }
-                    }
-                }
-            }
             div { class: "layout", "data-active-panel": active_panel(), style: "--left-width:{left_width}px;--right-width:{right_width}px;",
-                section { class: "panel controls left-panel", id: "poster-naming-settings", "aria-label": "Posters and naming details",
             header { class: "app-identity",
                 div { class: "brand", img { src: branding::icon_uri(), alt: "Media Manager icon" } }
                 div { h1 { "Media Manager" } p { "Organize your library, one clear preview at a time." } }
             }
+                section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Library, naming and API settings",
                     fieldset { disabled: busy() || confirming() || resume.read().is_some() || editing().is_some(),
                         div { class: "library-toggle", role: "group", "aria-label": "Library type",
                             button { r#type: "button", class: if form_value.movie { "" } else { "selected" },
@@ -356,28 +344,55 @@ fn App() -> Element {
                                 "aria-pressed": form_value.movie.to_string(),
                                 onclick: move |_| form.write().movie = true, "Movies" }
                         }
-                        section { class: "poster-box", "aria-label": "Show and season posters",
-                            poster::PosterCarousel { key: "{preview_show.name}-{preview_request.season:?}-{artwork_stale}", posters: carousel_posters }
-                            if plan.read().is_none() || artwork_stale {
-                                p { class: "hint", "Find a show with Build rename preview to load its artwork." }
-                            } else if artwork.poster.is_none() && artwork.seasons.is_empty() {
-                                p { class: "hint", "No posters available from this source." }
+                        section { class: "settings-group",
+                        h2 { "Connect your library" }
+                        label { "Storage"
+                            select { value: if connection_value.remote { "remote" } else { "local" },
+                                onchange: move |e| connection.write().remote = e.value() == "remote",
+                                option { value: "local", "This device" }
+                                option { value: "remote", "Remote server" }
                             }
-                            div { class: "poster-download-option",
-                                label { class: "check", input { r#type: "checkbox", checked: form_value.download_posters,
-                                    onchange: move |e| form.write().download_posters = e.checked() } "Download posters" }
-                                button { r#type: "button", class: "icon-button info-button", title: "About poster downloads",
-                                    "aria-label": "About poster downloads", "aria-expanded": show_poster_help().to_string(),
-                                    "aria-controls": "poster-download-help", onclick: move |_| show_poster_help.toggle(),
-                                    "ⓘ"
-                                }
+                        }
+                        if connection_value.remote {
+                            label { "Server URL" input { r#type: "url", value: "{connection_value.url}",
+                                oninput: move |e| connection.write().url = e.value() } }
+                            label { "Bearer token" input { r#type: "password", value: "{connection_value.token}", autocomplete: "off",
+                                oninput: move |e| connection.write().token = e.value() } }
+                            p { class: "hint", "Choose a subfolder relative to the server's configured media root. Leave blank for the root." }
+                        } else {
+                            if cfg!(any(target_os = "android", target_os = "ios")) {
+                                p { class: "hint", "Choose a media folder using the system picker. Only that folder is shared with Media Manager." }
+                                p { class: "hint", if connection_value.root.is_empty() { "No folder selected" } else { "Media folder selected" } }
+                                button { class: "secondary", onclick: move |_| {
+                                    #[cfg(any(target_os = "android", target_os = "ios"))]
+                                    spawn(async move {
+                                        match mobile_storage::pick().await {
+                                            Ok(root) => { connection.write().root = root; message.set("Media folder selected. Build a new preview.".into()); }
+                                            Err(error) => message.set(error.to_string()),
+                                        }
+                                    });
+                                }, "Choose media folder" }
+                            } else {
+                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
+                                    oninput: move |e| connection.write().root = e.value() } }
+                                button { class: "secondary", onclick: move |_| {
+                                    #[cfg(all(feature = "desktop", not(any(target_os = "android", target_os = "ios"))))]
+                                    {
+                                        let parent = dioxus::desktop::window();
+                                        spawn(async move {
+                                            if let Some(folder) = rfd::AsyncFileDialog::new()
+                                                .set_parent(parent.window.as_ref())
+                                                .set_title("Choose your media folder")
+                                                .pick_folder().await {
+                                                connection.write().root = folder.path().to_string_lossy().into();
+                                            }
+                                        });
+                                    }
+                                }, "Browse folders" }
                             }
-                            if show_poster_help() {
-                                p { id: "poster-download-help", class: "hint poster-help", "Save available posters when applying the preview. Existing images are kept." }
-                            }
-                            if matches!(preview_request.source, Source::TvMaze) && artwork.poster.is_some() {
-                                a { class: "poster-credit", href: "https://www.tvmaze.com", target: "_blank", rel: "noopener noreferrer", "Artwork via TVMaze" }
-                            }
+                        }
+                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
+                            oninput: move |e| form.write().folder = e.value() } }
                         }
                         section { class: "settings-group naming-group",
                         h2 { "Naming details" }
@@ -423,9 +438,59 @@ fn App() -> Element {
                             }
                         }
                         }
+                        section { class: "settings-group",
+                            h2 { "API settings" }
+                            if !form_value.movie {
+                            label { "Episode source"
+                                select { value: "{form_value.source}", onchange: move |e| form.write().source = e.value(),
+                                    option { value: "tvmaze", "TVMaze" }
+                                    option { value: "omdb", "OMDb" }
+                                    option { value: "custom", "Custom TVMaze-compatible API" }
+                                    option { value: "manual", "Manual titles" }
+                                    option { value: "batch", "Batch sequence" }
+                                    option { value: "web", "Episode guide URL" }
+                                }
+                            }
+                            div { class: "provider-settings",
+                            h3 { "Provider configuration" }
+                            if form_value.source == "tvmaze" { p { class: "hint", "TVMaze is ready to use. No API key required." } }
+                            if matches!(form_value.source.as_str(), "manual" | "batch" | "web") { p { class: "hint", "Configure titles, templates or a guide URL in Naming details." } }
+                            if form_value.source == "custom" {
+                                label { "API base URL" input { value: "{form_value.custom}", placeholder: "https://…",
+                                    oninput: move |e| form.write().custom = e.value() } }
+                            }
+                            if form_value.source == "omdb" || form_value.source == "custom" {
+                                label { "API key" input { r#type: "password", value: "{form_value.key}", autocomplete: "off",
+                                    oninput: move |e| form.write().key = e.value() } }
+                            }
+                            }
+                        }
+                            else { p { class: "hint", "Movies use the title and year entered in Naming details." } }
+                        }
+                        div { class: "settings-footer",
+                        if cfg!(any(target_os = "android", target_os = "ios")) {
+                            ads::NativeAdSlot {}
+                        }
+                        button { class: "primary", disabled: busy(), onclick: move |_| {
+                            let f = form.read().clone();
+                            let c = connection.read().clone();
+                            let request = match f.request() {
+                                Ok(r) => r,
+                                Err(e) => { message.set(e.to_string()); return; }
+                            };
+                            busy.set(true); message.set("Building preview…".into()); plan.set(None); consumed.set(false);
+                            spawn(async move {
+                                match c.preview(&request).await {
+                                    Ok(p) => { plan.set(Some(p)); snapshot.set(Some((f, c))); message.set("Preview ready. Review every destination before applying.".into()); active_panel.set("posters"); }
+                                    Err(e) => message.set(format!("{e:#}")),
+                                }
+                                busy.set(false);
+                            });
+                        }, if busy() { "Working…" } else { "Build rename preview" } }
+                        }
                     }
                 }
-                div { class: "resize-handle left-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize posters and naming", "aria-controls": "poster-naming-settings",
+                div { class: "resize-handle left-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize library settings", "aria-controls": "library-settings",
                     "aria-valuemin": "280", "aria-valuemax": "520", "aria-valuenow": "{left_width}",
                     onpointerdown: move |e| { e.prevent_default(); drag.set(Some(PanelDrag { right: false, x: e.client_coordinates().x, width: left_width() })); },
                     ondoubleclick: move |_| left_width.set(340.0),
@@ -533,12 +598,15 @@ fn App() -> Element {
                     strong { "{ready} renames · {poster_count} poster downloads ready" }
                     p { class: "hint", "Renames affect real files. This preview has no automatic undo." }
                 }
-                button { class: "primary", disabled: !can_apply, onclick: move |_| confirming.set(true),
-                    if poster_count > 0 { "Apply renames & posters" } else { "Rename {ready} files" }
+                div { class: "apply-actions",
+                    button { class: "secondary single-column-only", r#type: "button", "aria-controls": "poster-naming-settings", onclick: move |_| active_panel.set("posters"), "← Back" }
+                    button { class: "primary", disabled: !can_apply, onclick: move |_| confirming.set(true),
+                        if poster_count > 0 { "Apply renames & posters" } else { "Rename {ready} files" }
+                    }
                 }
             }
                 }
-                div { class: "resize-handle right-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize library settings", "aria-controls": "library-settings",
+                div { class: "resize-handle right-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize posters", "aria-controls": "poster-naming-settings",
                     "aria-valuemin": "260", "aria-valuemax": "480", "aria-valuenow": "{right_width}",
                     onpointerdown: move |e| { e.prevent_default(); drag.set(Some(PanelDrag { right: true, x: e.client_coordinates().x, width: right_width() })); },
                     ondoubleclick: move |_| right_width.set(300.0),
@@ -548,98 +616,35 @@ fn App() -> Element {
                         _ => (),
                     }
                 }
-                section { class: "panel controls right-panel", id: "library-settings", "aria-label": "Library and API settings",
+                section { class: "panel controls right-panel", id: "poster-naming-settings", "aria-label": "Show and season posters",
                     fieldset { disabled: busy() || confirming() || resume.read().is_some() || editing().is_some(),
-                        section { class: "settings-group",
-                        h2 { "Connect your library" }
-                        label { "Storage"
-                            select { value: if connection_value.remote { "remote" } else { "local" },
-                                onchange: move |e| connection.write().remote = e.value() == "remote",
-                                option { value: "local", "This device" }
-                                option { value: "remote", "Remote server" }
+                        section { class: "poster-box", "aria-label": "Show and season posters",
+                            poster::PosterCarousel { key: "{preview_show.name}-{preview_request.season:?}-{artwork_stale}", posters: carousel_posters }
+                            if plan.read().is_none() || artwork_stale {
+                                p { class: "hint", "Find a show with Build rename preview to load its artwork." }
+                            } else if artwork.poster.is_none() && artwork.seasons.is_empty() {
+                                p { class: "hint", "No posters available from this source." }
                             }
-                        }
-                        if connection_value.remote {
-                            label { "Server URL" input { r#type: "url", value: "{connection_value.url}",
-                                oninput: move |e| connection.write().url = e.value() } }
-                            label { "Bearer token" input { r#type: "password", value: "{connection_value.token}", autocomplete: "off",
-                                oninput: move |e| connection.write().token = e.value() } }
-                            p { class: "hint", "Choose a subfolder relative to the server's configured media root. Leave blank for the root." }
-                        } else {
-                            if cfg!(any(target_os = "android", target_os = "ios")) {
-                                p { class: "notice", "Local Android/iOS document access is pending. Use remote server mode in this preview." }
-                            } else {
-                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
-                                    oninput: move |e| connection.write().root = e.value() } }
-                                button { class: "secondary", onclick: move |_| {
-                                    #[cfg(all(feature = "desktop", not(any(target_os = "android", target_os = "ios"))))]
-                                    {
-                                        let parent = dioxus::desktop::window();
-                                        spawn(async move {
-                                            if let Some(folder) = rfd::AsyncFileDialog::new()
-                                                .set_parent(parent.window.as_ref())
-                                                .set_title("Choose your media folder")
-                                                .pick_folder().await {
-                                                connection.write().root = folder.path().to_string_lossy().into();
-                                            }
-                                        });
-                                    }
-                                }, "Browse folders" }
-                            }
-                        }
-                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
-                            oninput: move |e| form.write().folder = e.value() } }
-                        }
-                        section { class: "settings-group",
-                            h2 { "API settings" }
-                            if !form_value.movie {
-                            label { "Episode source"
-                                select { value: "{form_value.source}", onchange: move |e| form.write().source = e.value(),
-                                    option { value: "tvmaze", "TVMaze" }
-                                    option { value: "omdb", "OMDb" }
-                                    option { value: "custom", "Custom TVMaze-compatible API" }
-                                    option { value: "manual", "Manual titles" }
-                                    option { value: "batch", "Batch sequence" }
-                                    option { value: "web", "Episode guide URL" }
+                            div { class: "poster-download-option",
+                                label { class: "check", input { r#type: "checkbox", checked: form_value.download_posters,
+                                    onchange: move |e| form.write().download_posters = e.checked() } "Download posters" }
+                                button { r#type: "button", class: "icon-button info-button", title: "About poster downloads",
+                                    "aria-label": "About poster downloads", "aria-expanded": show_poster_help().to_string(),
+                                    "aria-controls": "poster-download-help", onclick: move |_| show_poster_help.toggle(),
+                                    "ⓘ"
                                 }
                             }
-                            div { class: "provider-settings",
-                            h3 { "Provider configuration" }
-                            if form_value.source == "tvmaze" { p { class: "hint", "TVMaze is ready to use. No API key required." } }
-                            if matches!(form_value.source.as_str(), "manual" | "batch" | "web") { p { class: "hint", "Configure titles, templates or a guide URL in the left panel." } }
-                            if form_value.source == "custom" {
-                                label { "API base URL" input { value: "{form_value.custom}", placeholder: "https://…",
-                                    oninput: move |e| form.write().custom = e.value() } }
+                            if show_poster_help() {
+                                p { id: "poster-download-help", class: "hint poster-help", "Save available posters when applying the preview. Existing images are kept." }
                             }
-                            if form_value.source == "omdb" || form_value.source == "custom" {
-                                label { "API key" input { r#type: "password", value: "{form_value.key}", autocomplete: "off",
-                                    oninput: move |e| form.write().key = e.value() } }
-                            }
+                            if matches!(preview_request.source, Source::TvMaze) && artwork.poster.is_some() {
+                                a { class: "poster-credit", href: "https://www.tvmaze.com", target: "_blank", rel: "noopener noreferrer", "Artwork via TVMaze" }
                             }
                         }
-                            else { p { class: "hint", "Movies use the title and year entered in Naming details." } }
-                        }
-                        div { class: "settings-footer",
-                        if cfg!(any(target_os = "android", target_os = "ios")) {
-                            ads::NativeAdSlot {}
-                        }
-                        button { class: "primary", disabled: busy(), onclick: move |_| {
-                            let f = form.read().clone();
-                            let c = connection.read().clone();
-                            let request = match f.request() {
-                                Ok(r) => r,
-                                Err(e) => { message.set(e.to_string()); return; }
-                            };
-                            busy.set(true); message.set("Building preview…".into()); plan.set(None); consumed.set(false);
-                            spawn(async move {
-                                match c.preview(&request).await {
-                                    Ok(p) => { plan.set(Some(p)); snapshot.set(Some((f, c))); message.set("Preview ready. Review every destination before applying.".into()); }
-                                    Err(e) => message.set(format!("{e:#}")),
-                                }
-                                busy.set(false);
-                            });
-                        }, if busy() { "Working…" } else { "Build rename preview" } }
-                        }
+                    }
+                    nav { class: "poster-navigation single-column-only", "aria-label": "Preview steps",
+                        button { class: "secondary", r#type: "button", disabled: busy() || confirming(), "aria-controls": "library-settings", onclick: move |_| active_panel.set("settings"), "← Back" }
+                        button { class: "primary", r#type: "button", disabled: busy() || confirming(), "aria-controls": "rename-preview", onclick: move |_| active_panel.set("preview"), "Next →" }
                     }
                 }
             }
@@ -718,7 +723,7 @@ fn App() -> Element {
                                         message.set("Settings restored. Refreshing your library preview…".into());
                                         spawn(async move {
                                             match c.preview(&request).await {
-                                                Ok(p) => { plan.set(Some(p)); snapshot.set(Some((f, c))); message.set("Workspace resumed and preview refreshed.".into()); }
+                                                Ok(p) => { plan.set(Some(p)); snapshot.set(Some((f, c))); message.set("Workspace resumed and preview refreshed.".into()); active_panel.set("posters"); }
                                                 Err(e) => message.set(format!("Settings restored. Could not refresh the preview: {e:#}")),
                                             }
                                             busy.set(false);

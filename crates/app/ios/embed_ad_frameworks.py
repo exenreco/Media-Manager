@@ -86,6 +86,8 @@ def main():
         info.update(plistlib.load(source))
     with (app / 'Info.plist').open('wb') as target:
         plistlib.dump(info, target)
+    run(sys.executable, str(Path(__file__).resolve().parents[3] / 'scripts/install_ios_icon.py'),
+        '--app', str(app), '--sdk', args.sdk)
     for framework in sorted(frameworks.glob('*.framework')):
         run('codesign', '--force', '--sign', args.identity, str(framework))
     run('codesign', '--force', '--sign', args.identity,

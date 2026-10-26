@@ -21,6 +21,7 @@ publisher = "Media Manager"
 deployment_target = "15.0"
 
 [ios.plist]
+LSSupportsOpeningDocumentsInPlace = true
 GADApplicationIdentifier = "ca-app-pub-9696662815161119~9310033241"
 SKAdNetworkItems = [
     { SKAdNetworkIdentifier = "22mmun2rn5.skadnetwork" },

@@ -18,6 +18,8 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     private var started = false
     private var disposed = false
     private var loading = false
+    private var consentInFlight = false
+    private var initializing = false
     private static var sdkReady = false
 
     public override init() { super.init() }
@@ -25,10 +27,20 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     @objc public func attach(_ address: UInt64) {
         guard let pointer = UnsafeRawPointer(bitPattern: UInt(address)) else { return }
         let host = Unmanaged<UIViewController>.fromOpaque(pointer).takeUnretainedValue()
-        guard let web = findWebView(host.view) else { return }
         controller = host
-        browser = web
         disposed = false
+        attachBrowser(remaining: 60)
+    }
+
+    private func attachBrowser(remaining: Int) {
+        guard !disposed, browser == nil, let controller else { return }
+        guard let web = findWebView(controller.view) else {
+            if remaining > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.attachBrowser(remaining: remaining - 1) }
+            }
+            return
+        }
+        browser = web
         web.configuration.userContentController.add(self, name: "MediaManagerAds")
         displayLink = CADisplayLink(target: self, selector: #selector(positionAd))
         displayLink?.add(to: .main, forMode: .common)
@@ -64,7 +76,11 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         case "bounds":
             geometry = command
             positionAd()
-            if !started && command["visible"] as? Bool == true {
+            if !started && command["eligible"] as? Bool == true {
+                started = true; requestConsent()
+            }
+        case "retry":
+            if !loading && !consentInFlight && geometry?["eligible"] as? Bool == true {
                 started = true; requestConsent()
             }
         case "hide": geometry = nil; hide()
@@ -74,14 +90,23 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     }
 
     private func requestConsent() {
+        guard !disposed, !consentInFlight else { return }
+        consentInFlight = true
+        report("Checking advertising privacy choices…")
         ConsentInformation.shared.requestConsentInfoUpdate(with: RequestParameters()) { [weak self] error in
             guard let self, !self.disposed, let controller = self.controller else { return }
             self.updatePrivacyButton()
-            guard error == nil else { self.collapse(); return }
+            guard error == nil else {
+                self.consentInFlight = false
+                if ConsentInformation.shared.canRequestAds { self.initializeAds() }
+                else { self.collapse("Could not check advertising privacy choices. Please retry.") }
+                return
+            }
             ConsentForm.loadAndPresentIfRequired(from: controller) { [weak self] error in
                 guard let self, !self.disposed else { return }
+                self.consentInFlight = false
                 self.updatePrivacyButton()
-                if error == nil && ConsentInformation.shared.canRequestAds { self.initializeAds() }
+                if ConsentInformation.shared.canRequestAds { self.initializeAds() }
                 else { self.collapse() }
             }
         }
@@ -108,15 +133,19 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     private func initializeAds() {
         guard !disposed, ConsentInformation.shared.canRequestAds else { return }
         if Self.sdkReady { loadAd(); return }
+        guard !initializing else { return }; initializing = true
+        report("Starting advertising…")
         MobileAds.shared.start { [weak self] _ in
             Self.sdkReady = true
+            self?.initializing = false
             self?.loadAd()
         }
     }
 
     private func loadAd() {
-        guard !disposed, !loading, let controller, ConsentInformation.shared.canRequestAds else { return }
+        guard !disposed, !loading, ad == nil, let controller, ConsentInformation.shared.canRequestAds else { return }
         loading = true
+        report("Loading advertisement…")
         #if DEBUG
         let unit = "ca-app-pub-3940256099942544/3986624511"
         #else
@@ -142,12 +171,16 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         expiry = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in self?.discardAd(); self?.collapse() }
         }
+        report("")
         positionAd()
     }
 
     public func adLoader(_ adLoader: AdLoader, didFailToReceiveAdWithError error: Error) {
         guard adLoader === loader else { return }
-        loading = false; collapse()
+        loading = false
+        let detail = error as NSError
+        NSLog("MediaManagerAds: %@", detail.description)
+        collapse("Ad unavailable (code \(detail.code)). You can retry.")
     }
 
     private func makeView(_ ad: NativeAd) -> NativeAdView {
@@ -182,8 +215,8 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         let headline = UILabel(); headline.text = ad.headline; headline.textColor = .white
         headline.font = .boldSystemFont(ofSize: 16); headline.numberOfLines = 2
         heading.addArrangedSubview(headline)
-        let advertiser = label(ad.advertiser, height: 40); advertiser.isHidden = ad.advertiser == nil
-        let body = label(ad.body, height: 80, lines: 4); body.isHidden = ad.body == nil
+        let advertiser = label(ad.advertiser, height: 20); advertiser.isHidden = ad.advertiser == nil
+        let body = label(ad.body, height: 36, lines: 2); body.isHidden = ad.body == nil
         let media = MediaView(); media.mediaContent = ad.mediaContent
         media.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
         stack.addArrangedSubview(media)
@@ -215,14 +248,23 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         let scale = browser.bounds.width / CGFloat(viewport)
         let rect = CGRect(x: CGFloat(values[0]) * scale, y: CGFloat(values[1]) * scale,
                           width: CGFloat(values[2]) * scale, height: CGFloat(values[3]) * scale)
-        guard rect.width >= 240, rect.height >= 440, browser.bounds.contains(rect)
+        guard rect.width >= 239, rect.height >= 379, browser.bounds.insetBy(dx: -1, dy: -1).contains(rect)
         else { hide(); return }
+        let compact = rect.height < 440
+        view.advertiserView?.isHidden = compact || ad?.advertiser == nil
+        view.bodyView?.isHidden = compact || ad?.body == nil
         view.frame = browser.convert(rect, to: window)
         view.isHidden = false
     }
 
     @objc private func hide() { adView?.isHidden = true }
-    private func collapse() {
+    private func report(_ message: String, retry: Bool = false) {
+        guard let bytes = try? JSONSerialization.data(withJSONObject: [message]),
+              let array = String(data: bytes, encoding: .utf8) else { return }
+        browser?.evaluateJavaScript("window.mediaManagerAdStatus?.(\(array)[0], \(retry))")
+    }
+    private func collapse(_ message: String = "No advertisement is available. You can retry.") {
+        report(message, retry: true)
         hide()
         browser?.evaluateJavaScript("document.getElementById('native-ad-slot')?.setAttribute('hidden', '')")
     }

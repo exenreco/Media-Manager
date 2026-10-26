@@ -152,6 +152,7 @@ jobs:
           mkdir -p "$gradle_home/init.d"
           cp .release-tools/crates/app/android/kotlin-toolchain.init.gradle "$gradle_home/init.d/media-manager-kotlin.gradle"
           echo "GRADLE_USER_HOME=$gradle_home" >> "$GITHUB_ENV"
+          echo "MEDIA_MANAGER_ANDROID_ICONS=$GITHUB_WORKSPACE/assets/branding/icons/android" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - name: Build installable Android preview with test ads
         working-directory: crates/app

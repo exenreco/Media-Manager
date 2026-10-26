@@ -130,10 +130,12 @@ pub fn finish_splash() {
                 (s.height - 100.0).clamp(400.0, 840.0),
             )
         });
+        // Tao's macOS decoration update queues a style mask using the current
+        // resizable state. Set it first so that queued update preserves resizing.
+        window.set_resizable(true);
         window.set_decorations(true);
         #[cfg(windows)]
         set_splash_border(window.window.as_ref(), false);
-        window.set_resizable(true);
         window.set_inner_size(LogicalSize::new(width, height));
         center_window(window.window.as_ref());
     }

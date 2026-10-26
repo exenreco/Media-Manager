@@ -37,6 +37,8 @@ pub fn NativeAdSlot() -> Element {
     rsx! {
         div { style: "margin-bottom:24px",
             div { id: "native-ad-slot", style: "height:440px;min-width:240px;position:relative", "aria-label": "Advertisement" }
+            p { id: "native-ad-status", class: "hint", role: "status", "Advertisement loads when this section is visible." }
+            button { id: "ad-retry", r#type: "button", class: "secondary", hidden: true, "Retry ad" }
             button { id: "ad-privacy", r#type: "button", class: "secondary", hidden: true, "Ad privacy options" }
         }
     }

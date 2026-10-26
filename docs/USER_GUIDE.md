@@ -21,16 +21,23 @@ It is an initial migration milestone, **not a completed five-platform release**.
 | Windows | Implemented | Implemented | Workspace compilation and backend tests pass |
 | macOS | Implemented in shared source | Implemented | Native ARM64/x64 CI builds/tests pass; UI acceptance pending |
 | Linux | Implemented in shared source | Implemented | Native x64 CI build/tests pass; UI acceptance pending |
-| Android | **Pending native folder/document bridge** | Implemented in shared source | ARM64 preview APK built in CI; device acceptance pending |
-| iOS | **Pending native document bridge** | Implemented in shared source | ARM64 Simulator archive built/signed in CI; device signing/testing pending |
+| Android | Native document-tree bridge in source | Implemented in shared source | ARM64 preview APK built in CI; device acceptance pending |
+| iOS | Native security-scoped folder bridge in source | Implemented in shared source | ARM64 Simulator archive built/signed in CI; device signing/testing pending |
 
-Local mobile mode deliberately reports that document access is unavailable.
-It does not claim to rename arbitrary mobile paths. The requirement is to support
-**both** device-local files and remote libraries on mobile; that requirement is
-not finished yet. Android needs Storage Access Framework tree grants and
-DocumentsContract operations. iOS needs document picking, security-scoped access
-and coordinated file operations. These must use provider document identifiers,
-not pretend that content URIs are normal filesystem paths.
+For local mobile libraries, select **This device**, then **Choose media folder**.
+Android opens the system document-tree picker and keeps the granted permission.
+iOS opens Files and saves a bookmark for the selected folder. Select a folder
+again if access is revoked. Preview scans names without copying media, and
+native provider operations apply the reviewed renames. Playback uses an Android
+video player or iOS Quick Look. Poster writes preserve existing images.
+
+Android restricts which roots can be selected (including Android/data and
+Android/obb); choose a media subfolder rather than the storage root. Provider
+support for renaming and writing varies. Read-only providers fail explicitly.
+Scan limits are 20,000 entries and 32 folder levels. Renames can partially
+succeed; inspect results before retrying. These new native bridges still need
+native builds/device validation and are absent from the published v0.1.1 previews.
+Remote server mode remains available.
 
 ## Run the desktop UI
 

@@ -92,3 +92,17 @@ References: [SDK setup](https://developers.google.com/admob/ios/quick-start),
 [native display](https://developers.google.com/admob/ios/native/advanced),
 [UMP consent](https://developers.google.com/admob/ios/privacy),
 [AdMob policies](https://support.google.com/admob/answer/6128543).
+
+## Local device libraries
+
+MediaManagerStorage.swift provides folder selection through Files, stores folder
+bookmarks, and balances security-scoped access during operations. Scans and
+renames use file coordination off the UI thread. Quick Look handles playback.
+The Rust storage bridge attaches independently of advertising consent. Native
+build and device validation of this new bridge is still pending.
+
+The ad slot adapts between 380 and 440 CSS pixels, with optional text hidden in
+compact layouts. Loading eligibility is separate from full overlay visibility.
+The bridge waits briefly for WKWebView readiness; errors show a status/code and
+a manual Retry ad button. UMP must authorize every request, including retries.
+SDK load failures are logged under MediaManagerAds.

@@ -16,7 +16,7 @@ pub struct Connection {
 impl Default for Connection {
     fn default() -> Self {
         Self {
-            remote: cfg!(any(target_os = "android", target_os = "ios")),
+            remote: false,
             root: String::new(),
             url: "http://127.0.0.1:8787".into(),
             token: String::new(),
@@ -54,7 +54,7 @@ impl Connection {
     pub async fn preview(&self, request: &PlanRequest) -> Result<RenamePlan> {
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
-            bail!("Local mobile document access is not implemented yet. Use remote mode.");
+            return crate::mobile_storage::preview(&self.root, request).await;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 if self.root.trim().is_empty() {
@@ -79,7 +79,7 @@ impl Connection {
     pub async fn apply(&self, plan: RenamePlan) -> Result<RenamePlan> {
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
-            bail!("Local mobile document access is not implemented yet. Use remote mode.");
+            return crate::mobile_storage::apply(plan).await;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let mut plan = tokio::task::spawn_blocking(move || -> Result<RenamePlan> {
@@ -135,7 +135,7 @@ impl Connection {
     pub async fn play(&self, plan: RenamePlan, index: usize) -> Result<Option<String>> {
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
-            bail!("Local mobile playback is not implemented; use remote mode");
+            return crate::mobile_storage::play(&plan, index).await;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let path = rename::playback_path(&plan, index)?;

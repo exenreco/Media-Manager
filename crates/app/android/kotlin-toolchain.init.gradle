@@ -3,6 +3,13 @@
 // metadata validation. Migrate the generated JVM-target DSL at configuration
 // time because kotlinOptions is an error in Kotlin 2.3.
 gradle.beforeProject { project ->
+    project.pluginManager.withPlugin('com.android.application') {
+        def iconPath = System.getenv('MEDIA_MANAGER_ANDROID_ICONS')
+        if (!iconPath || !new File(iconPath).isDirectory()) {
+            throw new GradleException('Set MEDIA_MANAGER_ANDROID_ICONS to assets/branding/icons/android')
+        }
+        project.extensions.getByName('android').sourceSets.getByName('main').res.srcDir(iconPath)
+    }
     if (project.buildFile.name.endsWith('.gradle.kts') && project.buildFile.exists()) {
         def original = project.buildFile.getText('UTF-8')
         def migrated = original.replaceAll(/(?s)\s*kotlinOptions\s*\{\s*jvmTarget\s*=\s*"17"\s*\}/, '\n')

@@ -31,7 +31,7 @@ macOS bundles are ad-hoc signed, not Developer ID signed/notarized. Windows EXEs
 are unsigned. Linux requires a compatible GTK/WebKitGTK runtime.
 
 Renames modify real files, may partially succeed, and have no automatic undo.
-Review every destination before applying. Original project code is MIT licensed;
+Review every destination before applying. Original project code is Apache 2.0 licensed;
 third-party libraries, ad SDKs and provider data retain their own terms.
 
 See README and docs/RELEASING.md in the source for prerequisites and release status.

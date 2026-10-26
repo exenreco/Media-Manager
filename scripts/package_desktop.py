@@ -5,6 +5,7 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import struct
 import subprocess
 import tarfile
 import zipfile
@@ -26,15 +27,24 @@ def main():
     suffix = '.exe' if args.platform == 'windows' else ''
     app_source = args.binaries / ('tv-manager-app' + suffix)
     server_source = args.binaries / ('tv-manager-server' + suffix)
+    if args.platform == 'windows':
+        binary = app_source.read_bytes()
+        pe_offset = struct.unpack_from('<I', binary, 0x3c)[0]
+        subsystem = struct.unpack_from('<H', binary, pe_offset + 92)[0]
+        if subsystem != 2:
+            raise SystemExit('Refusing to package a console app: rebuild with windows_subsystem = "windows"')
     if args.platform == 'macos':
         app = root / 'Media Manager.app'
         contents = app / 'Contents'
         (contents / 'MacOS').mkdir(parents=True, exist_ok=True)
+        (contents / 'Resources').mkdir(parents=True, exist_ok=True)
+        shutil.copy2('assets/branding/icons/app.icns', contents / 'Resources' / 'app.icns')
         shutil.copy2(app_source, contents / 'MacOS' / 'media-manager')
         (contents / 'Info.plist').write_bytes(plistlib.dumps({
             'CFBundleName': 'Media Manager', 'CFBundleDisplayName': 'Media Manager',
             'CFBundleIdentifier': 'com.tvshowmanager.app', 'CFBundleExecutable': 'media-manager',
             'CFBundlePackageType': 'APPL', 'CFBundleVersion': args.version,
+            'CFBundleIconFile': 'app.icns',
             'CFBundleShortVersionString': args.version.split('-')[0],
             'LSMinimumSystemVersion': '13.0', 'NSHighResolutionCapable': True,
         }))

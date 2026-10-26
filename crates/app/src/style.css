@@ -106,11 +106,10 @@ details p{line-height:1.7}
 .settings-group label:last-child,.settings-group .hint:last-child{margin-bottom:0}
 .provider-settings{margin-top:18px;padding-top:14px;border-top:1px solid #303f57}
 .provider-settings h3{margin:0 0 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#8aabc2}
-.right-panel fieldset{display:flex;flex-direction:column;min-height:100%}
-.settings-footer{margin-top:auto;padding-top:8px}
+.controls fieldset{display:flex;flex-direction:column;min-height:100%}
+.settings-footer{padding-top:8px}
 .left-panel .library-toggle{margin-bottom:18px}
 .poster-box{container-type:inline-size;margin-bottom:18px}
-.layout-tabs{display:none}
 @container(max-width:245px){.controls .poster-select{width:48px;flex-basis:48px}.controls .poster-select.active{width:104px;flex-basis:104px}.poster-card img{width:96px;height:144px}.poster-card.compact img{width:40px;height:60px}.carousel-track{min-height:192px}}
 /* Edge-to-edge workspace: side panels span the window; actions belong to the center. */
 main{display:block;padding:0;margin:0;gap:0}
@@ -122,8 +121,8 @@ main{display:block;padding:0;margin:0;gap:0}
 .left-panel{border-left:0}
 .right-panel{border-right:0}
 .apply-bar{box-shadow:none;border-left:0;border-right:0;border-bottom:0}
-.app-identity{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:0 0 18px;margin-bottom:20px;border-bottom:1px solid #303f57}
-.app-identity>div:nth-child(2){flex:1;min-width:140px}
+.app-identity{display:flex;align-items:center;gap:10px;padding:18px;margin:0;border-bottom:1px solid #303f57;background:#111b2b;min-width:0;grid-column:1;grid-row:1}
+.app-identity>div:nth-child(2){flex:1;min-width:0}
 .app-identity h1{font-size:20px;line-height:1.25;letter-spacing:-.5px}
 .app-identity p{font-size:11px;line-height:1.7}
 .app-identity .brand{padding:6px;border-radius:10px}
@@ -135,30 +134,34 @@ main{display:block;padding:0;margin:0;gap:0}
 /* Keep the workspace within the resized viewport; only panel bodies scroll. */
 html,body,#main{width:100%;height:100%;min-width:0;min-height:0}
 main{height:100dvh;min-height:0;overflow:hidden}
-.layout{width:100%;grid-template-rows:minmax(0,1fr);grid-template-columns:minmax(240px,min(var(--left-width,340px),30vw)) 10px minmax(280px,1fr) 10px minmax(220px,min(var(--right-width,300px),28vw))}
+.layout{width:100%;grid-template-rows:auto minmax(0,1fr);grid-template-columns:minmax(240px,min(var(--left-width,340px),30vw)) 10px minmax(280px,1fr) 10px minmax(220px,min(var(--right-width,300px),28vw))}
 .layout>.panel,.layout>.center-column{min-width:0;min-height:0;max-width:100%}
 .controls,.preview{overflow-x:hidden}
 .table-wrap{max-width:100%;flex-shrink:0}
 .apply-bar{max-width:100%;overflow-wrap:anywhere}
+.layout>.left-panel{grid-column:1;grid-row:2}.layout>.left-resizer{grid-column:2;grid-row:1/3}.layout>.center-column{grid-column:3;grid-row:1/3}.layout>.right-resizer{grid-column:4;grid-row:1/3}.layout>.right-panel{grid-column:5;grid-row:1/3}
 @media(min-width:901px) and (max-width:1150px){.panel{padding:14px}.controls{padding:12px}.apply-bar{padding:12px;gap:10px}}
+/* Single-column step navigation applies to mobile and narrow desktop windows. */
+.single-column-only{display:none}
+.apply-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}
 @media(max-width:900px){
-  main{display:grid;grid-template-rows:auto minmax(0,1fr)}
-  .layout-tabs{position:relative;z-index:2;display:flex;justify-content:flex-end;align-items:center;padding:7px 12px;background:#101a2b;border-bottom:1px solid #303f57;min-width:0}
-  .panel-menu-toggle{position:relative;z-index:1;display:grid;place-items:center;width:38px;height:38px;padding:0;background:#18263a;color:#b9eadb;border:1px solid #35415a;border-radius:6px}
-  .panel-menu-toggle:hover,.panel-menu-toggle[aria-expanded=true]{background:#293e53;border-color:#9de8d0}
-  .panel-menu-dismiss{position:fixed;inset:0;z-index:0;background:transparent;border:0;border-radius:0;cursor:default;padding:0}
-  .panel-menu{position:absolute;right:12px;top:calc(100% - 2px);z-index:1;display:grid;gap:4px;width:210px;padding:6px;border:1px solid #43516b;border-radius:8px;background:#18263a;box-shadow:0 12px 30px #0006}
-  .panel-menu button{width:100%;padding:12px;text-align:left;font-size:13px;background:transparent;color:#e8edf8;border-radius:4px}
-  .panel-menu button:hover{background:#293e53}
-  .panel-menu button[aria-pressed=true]{background:#9de8d0;color:#112b25}
-  .layout{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:0;padding:0;overflow:hidden}
+  main{display:block}
+  .layout{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:0;padding:0;overflow:hidden}
+  .layout>.app-identity{grid-column:1;grid-row:1;padding:12px 16px}
+  .layout>.left-panel,.layout>.right-panel,.layout>.center-column{grid-column:1;grid-row:2;display:none;width:100%;height:100%;margin:0}
   .resize-handle{display:none}
-  .layout>.left-panel,.layout>.right-panel,.layout>.center-column{display:none;width:100%;height:100%;margin:0}
-  .layout[data-active-panel=naming]>.left-panel,.layout[data-active-panel=library]>.right-panel{display:block}
+  .layout[data-active-panel=settings]>.left-panel{display:block}
+  .layout[data-active-panel=posters]>.right-panel{display:flex;flex-direction:column}
   .layout[data-active-panel=preview]>.center-column{display:grid}
+  .right-panel fieldset{flex:1;min-height:0;overflow-y:auto}
+  .single-column-only{display:flex}
+  .poster-navigation{justify-content:flex-end;gap:10px;flex-shrink:0;padding-top:14px;margin-top:auto}
+  .poster-navigation button{width:auto;min-width:90px}
+  .apply-actions{justify-content:flex-end;flex-wrap:wrap;max-width:100%}
+  .apply-actions button{width:auto}
   .panel{padding:16px}
   .apply-bar{padding:12px;gap:10px}
   .season-count{float:none;display:block;margin:8px 0 0 18px}
   .dialog .pair{flex-direction:column}
 }
-@media(max-height:600px){.controls,.preview{padding-top:12px}.app-identity{margin-bottom:12px;padding-bottom:12px}.apply-bar{padding:8px 12px}.apply-bar .hint{display:none}.empty{min-height:100px}}
+@media(max-height:600px){.controls,.preview{padding-top:12px}.app-identity{padding-top:12px;padding-bottom:12px}.apply-bar{padding:8px 12px}.apply-bar .hint{display:none}.empty{min-height:100px}}
