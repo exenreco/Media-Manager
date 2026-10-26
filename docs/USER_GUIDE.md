@@ -35,8 +35,8 @@ Android restricts which roots can be selected (including Android/data and
 Android/obb); choose a media subfolder rather than the storage root. Provider
 support for renaming and writing varies. Read-only providers fail explicitly.
 Scan limits are 20,000 entries and 32 folder levels. Renames can partially
-succeed; inspect results before retrying. These new native bridges still need
-native builds/device validation and are absent from the published v0.1.1 previews.
+succeed; inspect results before retrying. These native bridges compiled in Android/iOS CI and are included in v0.1.3
+previews. Device/provider validation is still pending.
 Remote server mode remains available.
 
 ## Run the desktop UI

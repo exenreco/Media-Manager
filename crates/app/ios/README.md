@@ -98,8 +98,8 @@ References: [SDK setup](https://developers.google.com/admob/ios/quick-start),
 MediaManagerStorage.swift provides folder selection through Files, stores folder
 bookmarks, and balances security-scoped access during operations. Scans and
 renames use file coordination off the UI thread. Quick Look handles playback.
-The Rust storage bridge attaches independently of advertising consent. Native
-build and device validation of this new bridge is still pending.
+The Rust storage bridge attaches independently of advertising consent. The bridge compiled successfully in native iOS CI for v0.1.3. Device/provider
+validation is still pending.
 
 The ad slot adapts between 380 and 440 CSS pixels, with optional text hidden in
 compact layouts. Loading eligibility is separate from full overlay visibility.

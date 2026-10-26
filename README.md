@@ -39,14 +39,14 @@ The tag-triggered [release workflow](.github/workflows/release.yml) builds each
 platform on its native host and attaches successful artifacts and SHA-256 checksums
 to a GitHub prerelease. Assets appear as jobs finish. A missing asset means that
 platform job has not completed successfully; check Actions before downloading.
-The current source adds Android document-tree selection and iOS security-scoped
-folder selection for local previews, renaming, posters and playback. These native
-bridges still require native builds and device validation; v0.1.1 downloads do
-not contain them. Mobile background jobs and notifications remain unfinished.
+The v0.1.3 source and mobile previews include Android document-tree selection and
+iOS security-scoped folder selection for local previews, renaming, posters and
+playback. Both mobile integrations have compiled in native CI; device/provider
+validation is still pending. Mobile background jobs and notifications remain unfinished.
 
-The [v0.1.1 prerelease](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.1)
-contains successful native CI builds for all rows above. Mobile device acceptance
-tests and production/store signing are still pending.
+Download the refreshed [v0.1.3 previews](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.3).
+Platform assets and checksums appear as their native CI jobs finish. Mobile device
+acceptance tests and production/store signing are still pending.
 
 ## Build and run
 
@@ -116,7 +116,7 @@ python -m unittest discover -s crates/app/ios/tests
 
 Native rename tests use temporary libraries, not your media. The live TVMaze test
 and desktop notification smoke test are opt-in and ignored during normal CI.
-The Windows build and 29 routine Rust tests have passed locally. Cross-platform
+The Windows build and 31 routine Rust tests have passed locally. Cross-platform
 build results are recorded in [GitHub Actions](https://github.com/exenreco/Media-Manager/actions).
 
 ## Repository layout
