@@ -12,6 +12,14 @@ Use **Dioxus CLI 0.7.10**, whose Android build supports these configuration
 fields. The activity package must remain `dev.dioxus.main` for Dioxus JNI;
 the BuildConfig alias uses the existing bundle ID `com.tvshowmanager.app`.
 
+Google Ads 25.5.0 contains Kotlin 2.3 metadata, while Dioxus 0.7.10 generates
+a Kotlin 2.0.20 Gradle plugin dependency. Before building, copy the supplied
+`kotlin-toolchain.init.gradle` to
+`$GRADLE_USER_HOME/init.d/media-manager-kotlin.gradle` (or
+`~/.gradle/init.d/media-manager-kotlin.gradle` when GRADLE_USER_HOME is unset).
+It selects Kotlin Gradle plugin 2.3.20 without disabling metadata checks.
+The release workflow applies this compiler configuration automatically.
+
 The Rust settings panel reserves an Android-only native ad slot above Build
 rename preview, with 24 CSS pixels between the ad and that action. An
 origin-restricted AndroidX WebKit message listener accepts geometry and

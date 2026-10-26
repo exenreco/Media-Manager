@@ -5,8 +5,8 @@
 The `Platform releases` workflow runs when a version tag such as `v0.1.0` is pushed.
 It can also rebuild an existing tag through Actions → Platform releases → Run workflow;
 choose all platforms or just desktop, Android or iOS when retrying packaging.
-The application source is always checked out at the requested tag. The iOS
-framework finishing helper comes from the workflow revision, so packaging-only
+The application source is always checked out at the requested tag. Mobile
+packaging helpers come from the workflow revision, so packaging-only
 repairs can rebuild an existing version without moving its tag.
 The tag must exactly match `[workspace.package].version` in Cargo.toml.
 
