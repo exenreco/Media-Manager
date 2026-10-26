@@ -17,7 +17,8 @@ a Kotlin 2.0.20 Gradle plugin dependency. Before building, copy the supplied
 `kotlin-toolchain.init.gradle` to
 `$GRADLE_USER_HOME/init.d/media-manager-kotlin.gradle` (or
 `~/.gradle/init.d/media-manager-kotlin.gradle` when GRADLE_USER_HOME is unset).
-It selects Kotlin Gradle plugin 2.3.20 without disabling metadata checks.
+It selects Kotlin Gradle plugin 2.3.20 and migrates the generated JVM-target
+configuration to compilerOptions without disabling metadata checks.
 The release workflow applies this compiler configuration automatically.
 
 The Rust settings panel reserves an Android-only native ad slot above Build
