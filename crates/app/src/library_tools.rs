@@ -92,10 +92,11 @@ fn MobilePairing(
             spawn(async move {
                 let result = async {
                     let invitation = pairing::scan_invitation().await?;
-                    Connection::redeem_pairing(invitation).await
+                    let desktop = if invitation.desktop.is_empty() { "Desktop".to_string() } else { invitation.desktop.clone() };
+                    Ok::<_, anyhow::Error>((Connection::redeem_pairing(invitation).await?, desktop))
                 }.await;
                 match result {
-                    Ok(value) => { connection.set(value); form.write().folder.clear(); message.set("Desktop paired. Choose naming settings and build a preview.".into()); }
+                    Ok((value, desktop)) => { connection.set(value); form.write().folder.clear(); message.set(format!("Paired with {desktop}. Choose naming settings and build a preview.")); }
                     Err(error) => message.set(format!("Pairing failed: {error:#}")),
                 }
                 busy.set(false);
@@ -164,6 +165,7 @@ fn DesktopPairing(
                 let result = async {
                     let c = if selected_mode == "local" {
                         use base64::Engine;
+                        anyhow::ensure!(!original.remote, "Select This device under Connect your library before local sharing");
                         let ip = ip_text.trim().parse::<std::net::IpAddr>().map_err(|_| anyhow::anyhow!("Enter the desktop LAN IP address"))?;
                         anyhow::ensure!(pairing::is_local(ip) && !ip.is_loopback(), "Use a private LAN address reachable from your phone");
                         let key = format!("{}|{ip}", original.root);

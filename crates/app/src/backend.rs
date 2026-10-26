@@ -399,6 +399,7 @@ mod local_pairing_tests {
             mode: "local".into(),
         };
         let encoded = serde_json::to_string(&invite).unwrap();
+        assert!(crate::pairing::qr_uri(&encoded).is_ok());
         let parsed = crate::pairing::Invitation::parse(&encoded).unwrap();
         let paired = Connection::redeem_pairing(parsed.clone()).await.unwrap();
         assert_eq!(paired.token, owner.token);

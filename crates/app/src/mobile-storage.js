@@ -6,7 +6,7 @@ const listener = event => {
     clearTimeout(timer); window.removeEventListener('media-manager-storage', listener);
     dioxus.send(event.detail);
 };
-const timer = setTimeout(() => { window.removeEventListener('media-manager-storage', listener); dioxus.send({error:'Storage request timed out. Inspect your library before retrying.'}); }, 300000);
+const timer = setTimeout(() => { window.removeEventListener('media-manager-storage', listener); dioxus.send({error:command.op === 'scanPairing' ? 'Scanning timed out. Close the camera and try again.' : 'Storage request timed out. Inspect your library before retrying.'}); }, 300000);
 window.addEventListener('media-manager-storage', listener);
 const bridge = window.MediaManagerStorage || window.webkit?.messageHandlers?.MediaManagerStorage;
 if (bridge) {

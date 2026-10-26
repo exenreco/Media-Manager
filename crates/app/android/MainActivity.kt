@@ -344,6 +344,7 @@ private class LocalStorage(private val activity: MainActivity) {
                 com.google.zxing.integration.android.IntentIntegrator(activity)
                     .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
                     .setPrompt("Align the desktop Media Manager QR code inside the guide")
+                    .setTimeout(240000L)
                     .setBeepEnabled(false)
                     .setOrientationLocked(false)
                     .initiateScan()

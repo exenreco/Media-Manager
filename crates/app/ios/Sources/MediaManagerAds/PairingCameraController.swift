@@ -9,6 +9,8 @@ final class PairingCameraController: UIViewController, AVCaptureMetadataOutputOb
     private var preview: AVCaptureVideoPreviewLayer?
     private let guide = UIView()
     private var completed = false
+    private var startupError: Error?
+    private var timeout: Timer?
     private let completion: (Result<String, Error>) -> Void
     init(completion: @escaping (Result<String, Error>) -> Void) {
         self.completion = completion
@@ -43,17 +45,22 @@ final class PairingCameraController: UIViewController, AVCaptureMetadataOutputOb
             output.setMetadataObjectsDelegate(self, queue: .main); output.metadataObjectTypes = [.qr]
             let layer = AVCaptureVideoPreviewLayer(session: session); layer.videoGravity = .resizeAspectFill
             view.layer.insertSublayer(layer, at: 0); preview = layer
-        } catch { DispatchQueue.main.async { self.finish(.failure(error)) } }
+        } catch { startupError = error }
     }
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if let error = startupError { finish(.failure(error)); return }
         guard !completed, preview != nil else { return }
+        timeout = Timer.scheduledTimer(withTimeInterval: 240, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.cancel() }
+        }
         let capture = session; queue.async { capture.startRunning() }
         NotificationCenter.default.addObserver(self, selector: #selector(backgrounded), name: UIApplication.didEnterBackgroundNotification, object: nil)
     }
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         NotificationCenter.default.removeObserver(self)
+        timeout?.invalidate(); timeout = nil
         let capture = session; queue.async { capture.stopRunning() }
     }
     override func viewDidLayoutSubviews() {
@@ -80,6 +87,7 @@ final class PairingCameraController: UIViewController, AVCaptureMetadataOutputOb
     private func scannerError(_ message: String) -> NSError { NSError(domain: "MediaManagerPairing", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
     private func finish(_ result: Result<String, Error>) {
         guard !completed else { return }; completed = true
+        timeout?.invalidate(); timeout = nil
         let capture = session; queue.async { capture.stopRunning() }
         dismiss(animated: true) { self.completion(result) }
     }

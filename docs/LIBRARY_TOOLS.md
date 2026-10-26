@@ -84,6 +84,9 @@ They persist in the app settings directory as `naming-profiles.json`.
 
 ## QR device pairing
 
+The camera/local-host flow below is in the current source; existing v0.1.4 downloads
+still use image-import pairing with a separately configured HTTPS backend.
+
 On desktop, **Pair a mobile device** offers **Local network** or **Remote HTTPS server**.
 Local mode uses the selected media root and detected LAN IP (editable for multi-adapter
 PCs). **Generate pairing QR** starts an encrypted library server bound to that IP on

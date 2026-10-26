@@ -134,3 +134,14 @@ The local installation lives in ignored `.tools/android-sdk`, `.tools/jdk`,
 phone with `scripts/start_android_emulator.ps1 -InstallApp` from PowerShell.
 The APK is the validated x86_64 build in `.tools/mobile-validation/android-evidence`.
 These machine-local tools and binaries are not included in Git or release archives.
+
+## Camera pairing implementation
+
+The current source replaces mobile QR-image import with native camera scanning
+(Android ZXing capture activity; iOS AVFoundation with a visible scan guide).
+Desktop QR generation supports an embedded, certificate-verified local TLS host
+and configured remote HTTPS servers. Rust integration tests verify local redemption,
+certificate rejection, one-use codes, and host shutdown. Camera permission denial,
+cancellation, actual scanning from a desktop display, device LAN/firewall reachability,
+and iOS local-network privacy prompts still need native runtime acceptance.
+Camera build validation: https://github.com/exenreco/Media-Manager/actions/runs/40418232110.
