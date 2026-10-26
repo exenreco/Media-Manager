@@ -2,6 +2,7 @@ import UIKit
 import WebKit
 import UniformTypeIdentifiers
 import QuickLook
+import CryptoKit
 
 /// Security-scoped folder access; no access outside folders chosen in Files.
 @MainActor
@@ -42,10 +43,10 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
               url.scheme == "dioxus", url.host == "index.html",
               let text = message.body as? String, let bytes = text.data(using: .utf8),
               let command = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else { return }
-        if command["op"] as? String == "pick" {
+        if command["op"] as? String == "pick" || command["op"] as? String == "pickImage" {
             guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before choosing a folder"]); return }
             pending = command
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: command["op"] as? String == "pickImage" ? [.image] : [.folder], asCopy: false)
             picker.delegate = self; picker.allowsMultipleSelection = false
             controller.present(picker, animated: true)
             return
@@ -84,6 +85,12 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
         do {
             guard let url = urls.first, url.startAccessingSecurityScopedResource() else { throw fail("Folder permission was not granted") }
             defer { url.stopAccessingSecurityScopedResource() }
+            if command["op"] as? String == "pickImage" {
+                let values=try url.resourceValues(forKeys:[.fileSizeKey])
+                guard (values.fileSize ?? Int.max) <= 10 * 1024 * 1024 else { throw fail("QR image exceeds 10 MB") }
+                let bytes=try Data(contentsOf:url)
+                reply(command,["data":bytes.base64EncodedString()]); return
+            }
             let bookmark = try url.bookmarkData(options: [.minimalBookmark], includingResourceValuesForKeys: nil, relativeTo: nil)
             let key = UUID().uuidString
             UserDefaults.standard.set(bookmark, forKey: "MediaManagerFolder-" + key)
@@ -142,12 +149,21 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
             var coordinationError: NSError?; var scanError: Error?
             coordinator.coordinate(readingItemAt: root, options: [], error: &coordinationError) { scoped in do { try walk(scoped, "", 0) } catch { scanError = error } }
             if let error = coordinationError ?? (scanError as NSError?) { throw error }
-            return ["name": root.lastPathComponent, "entries": entries, "cache": NSTemporaryDirectory()]
+            return ["name": root.lastPathComponent, "entries": entries, "cache": NSTemporaryDirectory(), "state": try manager.url(for:.applicationSupportDirectory,in:.userDomainMask,appropriateFor:nil,create:true).path]
         }
         let path = command["path"] as? String ?? ""; let pieces = try parts(path)
         guard let last = pieces.last else { throw NSError(domain: "Storage", code: 1) }
         let parent = try resolve(root, pieces.dropLast().joined(separator: "/"))
         let source = parent.appendingPathComponent(last)
+        if op == "hash" {
+            let before=try attributes(source)
+            let file=try FileHandle(forReadingFrom: source); defer {try? file.close()}
+            var hash=SHA256()
+            while let bytes=try file.read(upToCount:65536), !bytes.isEmpty {hash.update(data:bytes)}
+            let after=try attributes(source)
+            guard (before["size"] as? NSNumber)==(after["size"] as? NSNumber), (before["modified"] as? NSNumber)==(after["modified"] as? NSNumber) else {throw NSError(domain:"Storage",code:1,userInfo:[NSLocalizedDescriptionKey:"File changed while scanning"])}
+            return ["sha256":hash.finalize().map{String(format:"%02x",$0)}.joined()]
+        }
         if op == "rename" {
             let name = command["name"] as? String ?? ""
             guard try parts(name).count == 1, !name.contains("/") else { throw NSError(domain: "Storage", code: 1) }

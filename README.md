@@ -14,13 +14,20 @@ controlling a library from another device.
 
 ## Features
 
-- TV-show and movie modes, optional season selection, Plex naming and custom templates.
+- TV-show and movie modes, optional season selection, Plex/Jellyfin naming and custom templates.
 - Season tables with missing episodes, filename edits and media playback.
 - Show/season poster previews and optional downloads that preserve existing images.
 - Resizable desktop panels; Back/Next steps guide single-column windows through settings, posters and preview.
 - Local libraries or an authenticated remote library server.
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.
+
+Version 0.1.4 includes title-match selection, anime absolute
+numbering and explicit episode mappings, companion-file renaming, durable rename
+history and Undo, alternate TVMaze/TMDB artwork, preview health scans, saved naming
+profiles, and single-use QR pairing with a remote server. See
+[Library tools](docs/LIBRARY_TOOLS.md) for setup and limits, and
+[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v0.1.4 previews.
 
 ## Platform status and downloads
 
@@ -39,12 +46,12 @@ The tag-triggered [release workflow](.github/workflows/release.yml) builds each
 platform on its native host and attaches successful artifacts and SHA-256 checksums
 to a GitHub prerelease. Assets appear as jobs finish. A missing asset means that
 platform job has not completed successfully; check Actions before downloading.
-The v0.1.3 source and mobile previews include Android document-tree selection and
+The v0.1.4 source and mobile previews include Android document-tree selection and
 iOS security-scoped folder selection for local previews, renaming, posters and
 playback. Both mobile integrations have compiled in native CI; device/provider
 validation is still pending. Mobile background jobs and notifications remain unfinished.
 
-Download the refreshed [v0.1.3 previews](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.3).
+Download the [v0.1.4 previews](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.4).
 Platform assets and checksums appear as their native CI jobs finish. Mobile device
 acceptance tests and production/store signing are still pending.
 
@@ -70,7 +77,7 @@ cargo run -p tv-manager-app --locked
 
 Select a media folder, configure naming and metadata, build the preview, inspect
 all destinations, and confirm applying it. Renames affect real files; a batch can
-partially succeed and has no automatic undo. Existing destination files are never
+partially succeed; completed operations are recorded for explicit Undo. Existing destination files are never
 overwritten. See the [user guide](docs/USER_GUIDE.md) for matching rules and limitations.
 
 ## Optional remote server
@@ -91,7 +98,9 @@ token. Keep the token private. See [server configuration and API](docs/USER_GUID
 
 Windows publisher signing is prepared for Azure Artifact Signing but remains
 disabled until an identity-validated account and certificate profile are configured.
-See [Windows signing setup](docs/WINDOWS_SIGNING.md).
+The release workflow supports Azure Artifact Signing when publisher credentials are configured.
+For internal testing, `scripts/sign_windows_local.ps1` creates separately labeled
+self-signed builds; these do not establish public publisher trust.
 
 For Linux, use the Flatpak download to install a compatible GTK/WebKitGTK runtime
 automatically. See [installation and runtime details](docs/LINUX_RUNTIME.md).
@@ -126,7 +135,7 @@ python -m unittest discover -s crates/app/ios/tests
 
 Native rename tests use temporary libraries, not your media. The live TVMaze test
 and desktop notification smoke test are opt-in and ignored during normal CI.
-The Windows build and 31 routine Rust tests have passed locally. Cross-platform
+The Windows build and 46 routine Rust tests have passed locally. Cross-platform
 build results are recorded in [GitHub Actions](https://github.com/exenreco/Media-Manager/actions).
 
 ## Repository layout

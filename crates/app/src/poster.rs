@@ -56,7 +56,11 @@ pub fn PosterCard(url: Option<String>, title: String, compact: bool) -> Element 
         figure { class: if compact { "poster-card compact" } else { "poster-card" },
             img { src: source, alt: "{title}", loading: "lazy", referrerpolicy: "no-referrer",
                 onerror: move |_| failed.set(true) }
-            figcaption { "{title}" }
+            figcaption {
+                "{title}"
+                if url.is_none() { span { class: "hint", " — No poster available" } }
+                else if failed() { span { class: "hint", " — Poster could not load" } }
+            }
         }
     }
 }

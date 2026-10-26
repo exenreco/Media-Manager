@@ -49,7 +49,7 @@ impl Session {
     }
 }
 
-fn path() -> Result<PathBuf> {
+pub(crate) fn path() -> Result<PathBuf> {
     if let Some(directory) = std::env::var_os("MEDIA_MANAGER_STATE_DIR") {
         return Ok(PathBuf::from(directory).join(filename()));
     }
@@ -117,8 +117,11 @@ fn write(path: &Path, session: &Session) -> Result<()> {
     #[cfg(not(windows))]
     let session = {
         let mut copy = session.clone();
-        copy.credentials_omitted = !copy.form.key.is_empty() || !copy.connection.token.is_empty();
+        copy.credentials_omitted = !copy.form.key.is_empty()
+            || !copy.form.options.tmdb_key.is_empty()
+            || !copy.connection.token.is_empty();
         copy.form.key.clear();
+        copy.form.options.tmdb_key.clear();
         copy.connection.token.clear();
         copy
     };

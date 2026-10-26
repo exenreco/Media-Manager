@@ -4,30 +4,13 @@
   window.mediaManagerAdCleanup?.();
   let bridge, slot, previous = '', stopped = false, frame, waiting = false, attempts = 0;
   const status = (message, retry = false) => {
-    const label = document.getElementById('native-ad-status');
-    if (label) { label.textContent = message; label.hidden = !message; }
-    const button = document.getElementById('ad-retry');
-    if (button) button.hidden = !retry;
+    document.querySelectorAll('.native-ad-status').forEach(label => { label.textContent = message; label.hidden = !message; });
+    document.querySelectorAll('.ad-retry').forEach(button => { button.hidden = !retry; });
   };
   window.mediaManagerAdStatus = status;
-  const send = data => bridge?.postMessage(JSON.stringify(data));
-  function update() {
-    if (stopped) return;
-    bridge = window.MediaManagerAds || window.webkit?.messageHandlers?.MediaManagerAds;
-    slot = document.getElementById('native-ad-slot');
-    if (!bridge || !slot) {
-      waiting = true;
-      if (++attempts >= 120) {
-        if (slot) slot.hidden = true;
-        status('Advertising is unavailable in this build or WebView.', true);
-        return;
-      }
-      frame = requestAnimationFrame(update); return;
-    }
-    if (waiting) { slot.hidden = false; waiting = false; status('Waiting for an advertisement…'); }
-    // A compact native layout fits smaller phones without clipping its media or AdChoices.
-    const height = Math.min(440, Math.max(380, innerHeight - 220));
-    slot.style.height = `${height}px`;
+  const slots = () => [...document.querySelectorAll('.native-ad-slot')];
+  window.mediaManagerAdSetHidden = hidden => slots().forEach(slot => { slot.hidden = hidden; });
+  const geometry = slot => {
     const r = slot.getBoundingClientRect();
     let eligible = !document.hidden && !slot.hidden && !document.querySelector('.overlay') &&
       r.width >= 240 && r.height >= 379 && r.bottom > 0 && r.top < innerHeight;
@@ -41,14 +24,36 @@
         visible = visible && r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.left >= b.left - 1 && r.right <= b.right + 1;
       }
     }
-    const message = JSON.stringify({type:'bounds', eligible, visible, x:r.x, y:r.y, width:r.width, height:r.height, viewportWidth:innerWidth});
+    return {r, eligible, visible};
+  };
+  const send = data => bridge?.postMessage(JSON.stringify(data));
+  function update() {
+    if (stopped) return;
+    bridge = window.MediaManagerAds || window.webkit?.messageHandlers?.MediaManagerAds;
+    const candidates = slots();
+    const height = Math.min(440, Math.max(380, innerHeight - 220));
+    candidates.forEach(item => { item.style.height = `${height}px`; });
+    // A single native SDK view follows the visible placement; never duplicate an ad impression.
+    slot = candidates.find(item => geometry(item).visible) || candidates.find(item => geometry(item).eligible) || candidates[0];
+    if (!bridge || !slot) {
+      waiting = true;
+      if (++attempts >= 120) {
+        window.mediaManagerAdSetHidden(true);
+        status('Advertising is unavailable in this build or WebView.', true);
+        return;
+      }
+      frame = requestAnimationFrame(update); return;
+    }
+    if (waiting) { window.mediaManagerAdSetHidden(false); waiting = false; status('Waiting for an advertisement…'); }
+    const {r, eligible, visible} = geometry(slot);
+    const message = JSON.stringify({type:'bounds', placement:slot.id, eligible, visible, x:r.x, y:r.y, width:r.width, height:r.height, viewportWidth:innerWidth});
     if (message !== previous) { bridge.postMessage(message); previous = message; }
     frame = requestAnimationFrame(update);
   }
   const action = e => {
-    if (e.target.closest('#ad-privacy')) send({type:'privacy'});
-    if (e.target.closest('#ad-retry')) {
-      attempts = 0; previous = ''; if (slot) slot.hidden = false;
+    if (e.target.closest('.ad-privacy')) send({type:'privacy'});
+    if (e.target.closest('.ad-retry')) {
+      attempts = 0; previous = ''; window.mediaManagerAdSetHidden(false);
       status('Retrying advertisement…');
       cancelAnimationFrame(frame);
       if (bridge) { update(); send({type:'retry'}); }
@@ -63,6 +68,7 @@
     document.removeEventListener('click', action);
     window.removeEventListener('pagehide', hide);
     delete window.mediaManagerAdStatus;
+    delete window.mediaManagerAdSetHidden;
   };
   update();
 })();

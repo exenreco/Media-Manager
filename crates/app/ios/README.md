@@ -6,8 +6,8 @@ Configured IDs:
 - Release native unit: `ca-app-pub-9696662815161119/9079018827`
 - Debug unit: `ca-app-pub-3940256099942544/3986624511` (Google test ads)
 
-The Rust settings panel shows the same 440-point reserved ad area above Build
-rename preview on Android and iOS, separated from the button by 24 CSS pixels.
+The Rust settings panel places the native ad area directly below the TV Shows/Movies
+toggle on Android and iOS, with 24 CSS pixels before Connect your library.
 On iOS, `manganis::ffi` registers the `MediaManagerAds` Swift package with
 Dioxus CLI 0.7.10. The plugin attaches a main-frame-only WebKit message handler
 to the app's existing WKWebView. It accepts geometry/privacy commands only
@@ -28,21 +28,22 @@ not a replacement for the app's complete generated plist.
 
 ## Build on a Mac
 
-This checkout is on Windows. GitHub Actions successfully compiled Rust/Swift,
-embedded the Google SDKs, ad-hoc signed the simulator bundle and verified its
-signatures for the v0.1.1 prerelease. **Simulator UI/device acceptance testing
-and production/device signing remain pending.** Rust desktop checks alone
-cannot validate the native mobile integration.
+This checkout is on Windows. The current source compiled on macOS CI and passed
+installation/launch in an iPhone Simulator after correcting platform metadata and
+static SDK packaging. The captured test ad's SDK validator reported no implementation
+issues. Full feature acceptance on physical devices and production/device signing
+remain pending. See [mobile validation](../../../docs/MOBILE_VALIDATION.md).
 
 Install Xcode, its iOS SDK, the required Rust iOS target and Dioxus CLI 0.7.10.
 Use iOS 15 or later. From `crates/app`, build with:
 
 ```sh
-dx build --platform ios --no-default-features --features mobile
+dx build --platform ios --target aarch64-apple-ios-sim --no-default-features --features mobile
 ```
 
 Dioxus builds the Swift package and installs `DioxusSwiftPlugins.framework`.
-Its packaging code does not explicitly copy SwiftPM binary SDK dependencies.
+The Google SDK static archives are linked into that plugin; they must not be
+embedded as executable frameworks. Their privacy/resources still need packaging.
 After building, run the supplied finishing script with the actual output
 paths from that build. The SwiftPM artifacts directory is normally beneath
 `target/swift-build/swift-plugins/mediamanagerads/.build/artifacts`:
@@ -56,9 +57,10 @@ python3 ios/embed_ad_frameworks.py \
 
 For a physical device, use `--sdk iphoneos --arch arm64` and replace `-` with
 your valid Apple signing identity. Build with the correct team/provisioning
-profile first. The script selects the matching XCFramework slices, embeds
-GoogleMobileAds and UserMessagingPlatform, configures the plugin's framework
-search path, merges advertising plist values, signs frameworks, re-signs the
+profile first, targeting `aarch64-apple-ios`. The script selects matching XCFramework
+slices, preserves static SDK privacy/resources as resource bundles, embeds any dynamic
+SDK frameworks, configures the plugin's framework search path, corrects platform
+metadata, merges advertising plist values, signs dynamic frameworks, re-signs the
 app while preserving entitlements, and verifies signatures. It fails if the
 Swift plugin or either SDK is missing. Run it **before** installing/exporting
 the finished bundle. Do not use an earlier IPA produced before this step.
@@ -80,8 +82,8 @@ Do not click production ads while testing.
 - On simulator and device, check test-ad identification, native assets and
   video, AdChoices, consent and reopened privacy options, offline/no-fill,
   panel scrolling/resizing, dialogs, rotation, background/resume and font sizes.
-- Confirm the signed bundle contains the SDK frameworks and their privacy
-  manifests, the correct app ID/SKAdNetwork list, and the correct ad-unit mode.
+- Confirm the signed bundle contains the SDK code in the Swift plugin and its
+  privacy/resource bundles (or dynamically linked frameworks where applicable), the correct app ID/SKAdNetwork list, and the correct ad-unit mode.
   Source implementation is not Google or App Store approval.
 
 Shared bridge tests: `node --test android/tests/native-ad.test.cjs`.
@@ -106,3 +108,7 @@ compact layouts. Loading eligibility is separate from full overlay visibility.
 The bridge waits briefly for WKWebView readiness; errors show a status/code and
 a manual Retry ad button. UMP must authorize every request, including retries.
 SDK load failures are logged under MediaManagerAds.
+
+A second mobile ad placement appears below the poster panel, above its navigation.
+One native SDK ad view follows the visible placement; the two placeholders do not
+duplicate the same ad view or create extra requests when switching panels.

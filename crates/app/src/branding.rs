@@ -142,12 +142,32 @@ pub fn finish_splash() {
 }
 
 #[component]
-pub fn Splash(oncontinue: EventHandler<()>) -> Element {
+pub fn Splash(
+    progress: u8,
+    onartworkready: EventHandler<()>,
+    oncontinue: EventHandler<()>,
+) -> Element {
+    let progress = progress.min(100);
+    let status = match progress {
+        0..=69 => "Loading saved workspace…",
+        70..=99 => "Preparing artwork…",
+        _ => "Ready",
+    };
     rsx! {
         style { "{SPLASH_CSS}" }
         div { class: "splash-stage",
-            img { src: splash_uri(), alt: "Media Manager — Your library. In perfect order.", draggable: "false" }
-            button { class: "splash-skip", autofocus: true, onclick: move |_| oncontinue.call(()), "Open library →" }
+            div { class: "splash-artwork",
+                img { src: splash_uri(), alt: "Media Manager — Your library. In perfect order.", draggable: "false",
+                    onload: move |_| onartworkready.call(()), onerror: move |_| onartworkready.call(()) }
+                div { class: "splash-loading",
+                    div { class: "splash-progress", role: "progressbar", "aria-label": "Starting Media Manager",
+                        "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": progress.to_string(), "aria-valuetext": status,
+                        div { class: "splash-progress-fill", style: "width:{progress}%" }
+                    }
+                    div { class: "splash-progress-status", role: "status", "{status} {progress}%" }
+                }
+            }
+            button { class: "splash-skip", disabled: progress < 100, onclick: move |_| oncontinue.call(()), "Open library →" }
         }
     }
 }

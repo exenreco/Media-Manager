@@ -1,3 +1,4 @@
+mod library;
 mod media;
 
 use axum::{
@@ -25,6 +26,7 @@ struct AppState {
     plans: Arc<Mutex<HashMap<Uuid, (Instant, RenamePlan)>>>,
     gate: Arc<tokio::sync::Semaphore>,
     media: Arc<media::Playback>,
+    pairings: Arc<Mutex<HashMap<Uuid, Instant>>>,
 }
 
 type ApiError = (StatusCode, Json<serde_json::Value>);
@@ -133,6 +135,18 @@ async fn apply(
             )
         })??;
         tv_manager_core::posters::download(&mut plan).await;
+        let plan = tokio::task::spawn_blocking(move || {
+            tv_manager_core::history::finish(&plan)
+                .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            Ok::<_, ApiError>(plan)
+        })
+        .await
+        .map_err(|_| {
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "History finalization interrupted",
+            )
+        })??;
         media.remember(&plan);
         Ok(Json(plan))
     })
@@ -198,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
         plans: Arc::new(Mutex::new(HashMap::new())),
         gate: Arc::new(tokio::sync::Semaphore::new(1)),
         media: Arc::new(media::Playback::default()),
+        pairings: Arc::new(Mutex::new(HashMap::new())),
     };
     let app = router(state);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
@@ -209,6 +224,12 @@ async fn main() -> anyhow::Result<()> {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/search", post(library::search))
+        .route("/v1/history", post(library::history_list))
+        .route("/v1/history/{id}/undo", post(library::undo))
+        .route("/v1/plans/{id}/health", post(library::health_scan))
+        .route("/v1/pairing", post(library::create_pairing))
+        .route("/v1/pairing/redeem", post(library::redeem))
         .route("/v1/plans", post(preview))
         .route("/v1/plans/{id}/apply", post(apply))
         .route("/v1/plans/{id}/tasks/{index}", patch(edit))
@@ -300,6 +321,7 @@ mod tests {
             plans: Arc::new(Mutex::new(HashMap::new())),
             gate: Arc::new(tokio::sync::Semaphore::new(1)),
             media: Arc::new(media::Playback::default()),
+            pairings: Arc::new(Mutex::new(HashMap::new())),
         })
     }
     fn request(method: &str, uri: &str, body: String) -> Request<Body> {
@@ -530,5 +552,150 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
+mod library_feature_tests {
+    use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        http::Request,
+    };
+    use tower::ServiceExt;
+    fn state(root: PathBuf) -> AppState {
+        AppState {
+            root,
+            token: Arc::new("a-long-token-for-pairing-tests-12345678".into()),
+            plans: Arc::new(Mutex::new(HashMap::new())),
+            gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            media: Arc::new(media::Playback::default()),
+            pairings: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+    fn request(uri: &str, body: serde_json::Value, auth: bool) -> Request<Body> {
+        let builder = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json");
+        let builder = if auth {
+            builder.header(
+                "authorization",
+                "Bearer a-long-token-for-pairing-tests-12345678",
+            )
+        } else {
+            builder
+        };
+        builder.body(Body::from(body.to_string())).unwrap()
+    }
+    #[tokio::test]
+    async fn pairing_is_authenticated_short_lived_and_single_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path().canonicalize().unwrap());
+        let app = router(state.clone());
+        assert_eq!(
+            app.clone()
+                .oneshot(request("/v1/pairing", serde_json::json!({}), false))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let response = app
+            .clone()
+            .oneshot(request("/v1/pairing", serde_json::json!({}), true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        let payload = serde_json::json!({"code":value["code"]});
+        let response = app
+            .clone()
+            .oneshot(request("/v1/pairing/redeem", payload.clone(), false))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            app.clone()
+                .oneshot(request("/v1/pairing/redeem", payload, false))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let expired = Uuid::new_v4();
+        state
+            .pairings
+            .lock()
+            .unwrap()
+            .insert(expired, Instant::now() - Duration::from_secs(301));
+        assert_eq!(
+            app.oneshot(request(
+                "/v1/pairing/redeem",
+                serde_json::json!({"code":expired}),
+                false
+            ))
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    #[tokio::test]
+    async fn history_rejects_unauthenticated_and_outside_root_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = router(state(dir.path().canonicalize().unwrap()));
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    "/v1/history",
+                    serde_json::json!({"folder":""}),
+                    false
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.oneshot(request(
+                "/v1/history",
+                serde_json::json!({"folder":"../"}),
+                true
+            ))
+            .await
+            .unwrap()
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+}
+
+#[cfg(test)]
+mod live_matching_tests {
+    use super::*;
+    #[tokio::test]
+    #[ignore = "Uses live TVMaze; run explicitly with network access"]
+    async fn one_piece_1999_matches_anime_and_retains_full_episode_metadata() {
+        let mut request = PlanRequest {
+            name: "One Piece".into(),
+            year: Some(1999),
+            season: None,
+            ..Default::default()
+        };
+        let matches = tv_manager_core::metadata::search(&request).await.unwrap();
+        let selected = matches
+            .iter()
+            .find(|item| item.year == Some(1999) && item.name == "One Piece")
+            .unwrap();
+        request.options.selected_id = selected.id.clone();
+        let show = tv_manager_core::metadata::lookup(&request, 0)
+            .await
+            .unwrap();
+        assert_eq!(show.year, Some(1999));
+        assert_eq!(show.name, "One Piece");
+        assert!(show.episodes.len() > 1000);
+        assert!(show.artwork.poster.is_some());
     }
 }

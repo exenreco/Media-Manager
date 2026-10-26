@@ -89,7 +89,11 @@ impl Connection {
                 })
                 .await??;
                 tv_manager_core::posters::download(&mut plan).await;
-                return Ok(plan);
+                return tokio::task::spawn_blocking(move || {
+                    tv_manager_core::history::finish(&plan)?;
+                    Ok(plan)
+                })
+                .await?;
             }
         }
         let (client, url) = self.client()?;
@@ -129,6 +133,133 @@ impl Connection {
                 .map_err(|_| anyhow::anyhow!("Could not update the remote preview"))?,
         )
         .await
+    }
+
+    pub async fn search(&self, request: &PlanRequest) -> Result<Vec<tv_manager_core::ShowMatch>> {
+        if !self.remote {
+            return tv_manager_core::metadata::search(request).await;
+        }
+        let (client, url) = self.client()?;
+        decode(
+            client
+                .post(url.join("/v1/search")?)
+                .bearer_auth(&self.token)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+    pub async fn history(
+        &self,
+        folder: &str,
+    ) -> Result<Vec<tv_manager_core::history::HistoryRecord>> {
+        if !self.remote {
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            return crate::mobile_storage::history(&self.root, folder).await;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let root = rename::scoped_folder(&PathBuf::from(&self.root), folder)?;
+                return tokio::task::spawn_blocking(move || tv_manager_core::history::list(&root))
+                    .await?;
+            }
+        }
+        let (client, url) = self.client()?;
+        decode(
+            client
+                .post(url.join("/v1/history")?)
+                .bearer_auth(&self.token)
+                .json(&serde_json::json!({"folder":folder}))
+                .send()
+                .await?,
+        )
+        .await
+    }
+    pub async fn undo(
+        &self,
+        folder: &str,
+        id: uuid::Uuid,
+    ) -> Result<tv_manager_core::history::HistoryRecord> {
+        if !self.remote {
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            return crate::mobile_storage::undo(&self.root, folder, id).await;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let root = rename::scoped_folder(&PathBuf::from(&self.root), folder)?;
+                return tokio::task::spawn_blocking(move || {
+                    tv_manager_core::history::undo(&root, id)
+                })
+                .await?;
+            }
+        }
+        let (client, url) = self.client()?;
+        decode(
+            client
+                .post(url.join(&format!("/v1/history/{id}/undo"))?)
+                .bearer_auth(&self.token)
+                .json(&serde_json::json!({"folder":folder}))
+                .send()
+                .await?,
+        )
+        .await
+    }
+    pub async fn health(&self, plan: RenamePlan) -> Result<tv_manager_core::health::HealthReport> {
+        if !self.remote {
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            return crate::mobile_storage::health(&self.root, &plan).await;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            return tokio::task::spawn_blocking(move || tv_manager_core::health::scan(&plan))
+                .await?;
+        }
+        let (client, url) = self.client()?;
+        decode(
+            client
+                .post(url.join(&format!("/v1/plans/{}/health", plan.id))?)
+                .bearer_auth(&self.token)
+                .send()
+                .await?,
+        )
+        .await
+    }
+    pub async fn pairing_code(&self) -> Result<String> {
+        let (client, url) = self.client()?;
+        let value: serde_json::Value = decode(
+            client
+                .post(url.join("/v1/pairing")?)
+                .bearer_auth(&self.token)
+                .send()
+                .await?,
+        )
+        .await?;
+        Ok(value["code"]
+            .as_str()
+            .context("Missing pairing code")?
+            .into())
+    }
+    pub async fn redeem_pairing(url: String, code: String) -> Result<Self> {
+        // Reuse URL validation without ever transmitting the placeholder credential.
+        let connection = Self {
+            remote: true,
+            url,
+            token: "pairing-validation".into(),
+            ..Default::default()
+        };
+        let (client, url) = connection.client()?;
+        let value: serde_json::Value = decode(
+            client
+                .post(url.join("/v1/pairing/redeem")?)
+                .json(&serde_json::json!({"code":code}))
+                .send()
+                .await?,
+        )
+        .await?;
+        Ok(Self {
+            token: value["token"]
+                .as_str()
+                .context("Missing pairing credential")?
+                .into(),
+            ..connection
+        })
     }
 
     /// None means the default desktop player was opened; Some is a remote stream.
@@ -209,7 +340,7 @@ fn open_local(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-async fn decode(response: reqwest::Response) -> Result<RenamePlan> {
+async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
     if !response.status().is_success() {
         let status = response.status();
         let value: serde_json::Value = response.json().await.unwrap_or_default();

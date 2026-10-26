@@ -17,6 +17,7 @@ this license does not relicense third-party libraries, SDKs, artwork or provider
   configuration identifiers, not authentication secrets.
 - TVMaze data/artwork is subject to the [TVMaze API terms](https://www.tvmaze.com/api).
   OMDb data/artwork is subject to the [OMDb terms](https://www.omdbapi.com/legal.htm).
+  TMDB artwork is subject to the [TMDB API terms](https://www.themoviedb.org/api-terms-of-use).
   Provider artwork is fetched at runtime and is not part of the app's original art.
 - The third party design-reference images are third-party works.
   Local copies under assets/branding/references are excluded from Git and releases.

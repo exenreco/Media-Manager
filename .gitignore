@@ -52,3 +52,8 @@ workspace.json
 
 # Third-party reference art is retained locally, not redistributed
 /assets/branding/references/
+
+# Library journals and local naming profiles
+.media-manager/
+mobile-history/
+naming-profiles.json

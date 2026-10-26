@@ -10,7 +10,7 @@ function harness({bridge = true, ios = false, viewportHeight = 800} = {}) {
   const rect = {x:10, y:10, top:10, left:10, right:310, bottom:450, width:300, height:440};
   const parentRect = {top:0, left:0, right:400, bottom:800};
   const parent = {parentElement:null, getBoundingClientRect:() => parentRect};
-  const slot = {style:{},hidden:false, parentElement:parent, getBoundingClientRect:() => rect};
+  const slot = {id:'library',style:{},hidden:false, parentElement:parent, getBoundingClientRect:() => rect};
   let modal = false, frame;
   const window = {
     addEventListener:(name, callback) => listeners.set(name, callback),
@@ -22,7 +22,10 @@ function harness({bridge = true, ios = false, viewportHeight = 800} = {}) {
     else window.MediaManagerAds = handler;
   }
   const status = {hidden:false,textContent:''}, retry = {hidden:true};
+  const posterRect = {...rect, y:900, top:900, bottom:1340};
+  const poster = {id:'posters', style:{}, hidden:false, parentElement:parent, getBoundingClientRect:() => posterRect};
   const document = {
+    querySelectorAll:selector => selector === '.native-ad-slot' ? [slot, poster] : selector === '.native-ad-status' ? [status] : selector === '.ad-retry' ? [retry] : [],
     hidden:false,
     getElementById:id => id === 'native-ad-slot' ? slot : id === 'native-ad-status' ? status : id === 'ad-retry' ? retry : {hidden:true},
     querySelector:() => modal ? {} : null,
@@ -35,7 +38,7 @@ function harness({bridge = true, ios = false, viewportHeight = 800} = {}) {
     cancelAnimationFrame:() => {frame = null;},
   };
   vm.runInNewContext(script, context);
-  return {messages, rect, slot, parentRect, window, document, listeners, status, retry,
+  return {messages, rect, slot, poster, posterRect, parentRect, window, document, listeners, status, retry,
     installBridge:() => { window.MediaManagerAds = {postMessage:value => messages.push(JSON.parse(value))}; },
     tick:() => frame?.(), modal:value => {modal = value;}};
 }
@@ -66,7 +69,7 @@ test('fails closed without an Android bridge and never forwards ad click events'
   const h = harness();
   h.listeners.get('click')({target:{closest:() => null}});
   assert.equal(h.messages.length, 1);
-  h.listeners.get('click')({target:{closest:selector => selector === '#ad-privacy' ? {} : null}});
+  h.listeners.get('click')({target:{closest:selector => selector === '.ad-privacy' ? {} : null}});
   assert.equal(h.messages.at(-1).type, 'privacy');
 });
 
@@ -74,7 +77,7 @@ test('uses the iOS WebKit handler for geometry, privacy and teardown', () => {
   const h = harness({ios:true});
   assert.equal(h.messages.at(-1).type, 'bounds');
   assert.equal(h.messages.at(-1).visible, true);
-  h.listeners.get('click')({target:{closest:selector => selector === '#ad-privacy' ? {} : null}});
+  h.listeners.get('click')({target:{closest:selector => selector === '.ad-privacy' ? {} : null}});
   assert.equal(h.messages.at(-1).type, 'privacy');
   h.window.mediaManagerAdCleanup();
   assert.equal(h.messages.at(-1).type, 'hide');
@@ -104,6 +107,20 @@ test('failed requests expose status and retry only when the user asks', () => {
   assert.equal(h.status.textContent,'Ad unavailable (code 3).'); assert.equal(h.retry.hidden,false);
   h.tick(); assert.equal(h.messages.at(-1).eligible,false);
   assert.equal(h.messages.some(m => m.type==='retry'),false);
-  h.listeners.get('click')({target:{closest:selector => selector === '#ad-retry' ? {} : null}});
+  h.listeners.get('click')({target:{closest:selector => selector === '.ad-retry' ? {} : null}});
   assert.equal(h.slot.hidden,false); assert.equal(h.messages.at(-1).type,'retry');
+});
+
+test('moves the native view to the poster placement when the library is hidden', () => {
+  const h = harness();
+  assert.equal(h.messages.at(-1).placement, 'library');
+  h.rect.top = -500; h.rect.bottom = -60;
+  Object.assign(h.posterRect, {top:10,y:10,bottom:450});
+  h.tick();
+  assert.equal(h.messages.at(-1).placement, 'posters');
+  assert.equal(h.messages.at(-1).visible, true);
+  h.window.mediaManagerAdSetHidden(true);
+  assert.equal(h.slot.hidden, true); assert.equal(h.poster.hidden, true);
+  h.window.mediaManagerAdSetHidden(false);
+  h.tick(); assert.equal(h.messages.at(-1).visible, true);
 });

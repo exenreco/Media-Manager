@@ -1,45 +1,43 @@
-# Media Manager v0.1.3 preview
-
-Supersedes v0.1.2 with corrected iOS Swift-product registration.
+# Media Manager v0.1.4 preview
 
 ## Changes
 
-- Revised three-column dashboard: library, naming and API settings on the left;
-  posters on the right; preview and rename actions in the center.
-- Back/Next navigation in single-column windows. Successful previews open posters
-  automatically. Removed the settings gear and menu.
-- Windows GUI builds no longer create a console window; packaging rejects console builds.
-- Fixed the macOS splash transition that could leave resizing disabled.
-- Added Android launcher icons, iOS app icons and a macOS bundle icon.
-- Added Android document-tree access and iOS security-scoped folder access for
-  local previews, renaming, poster writes and playback. These new integrations
-  still require real-device/provider acceptance testing.
-- Improved mobile ad bridge readiness, compact layouts, consent error recovery,
-  and failure reporting with a manual Retry ad button. Real ad delivery remains
-  subject to SDK, network, consent and AdMob account configuration.
-- Apache 2.0 license; README now includes the app logo and dashboard screenshot.
+- Added title-match selection, optional premiere-year search, and alternate TVMaze/TMDB posters.
+- Added anime absolute numbering, detected episode numbers, and explicit episode mappings.
+- Rename companion subtitles, audio and NFO files alongside media.
+- Persistent rename history and explicit Undo for completed operations.
+- Preview health scans, including SHA-256 exact duplicate detection.
+- Saved naming profiles and single-use QR pairing with the remote server.
+- Working splash progress and None/Plex/Jellyfin naming selection.
+- Fixed iOS Simulator installation by packaging static Google SDK resources without embedding static archives as executable frameworks.
+- Added automated Android/iOS install-and-launch validation and a local Android emulator launcher.
 
 ## Downloads
 
-Platform jobs attach assets as they finish:
+Native release jobs attach platform assets and SHA-256 checksums as they finish:
 
 - Windows x64 portable ZIP with app and optional server.
 - macOS Apple Silicon and Intel ZIPs with app bundle and optional server.
-- Linux x64 TAR.GZ with app and optional server, built on Ubuntu 24.04.
+- Linux x64 TAR.GZ and Flatpak using a managed GTK/WebKitGTK runtime.
 - Android ARM64 debug-signed preview APK with test ads.
-- iOS ARM64 **Simulator-only** app ZIP with test ads, for Xcode on a Mac.
+- iOS ARM64 **Simulator-only** app ZIP, for Xcode on a Mac. This is not an iPhone IPA.
 
-Verify downloads against the accompanying SHA-256 files. A missing asset means
-its job is pending or failed; inspect Actions for build status.
+## Validation and limits
 
-## Preview limitations
+Rust tests and native bridge/packaging checks passed. Android and iOS installed,
+launched and survived the startup check in hosted emulators/simulators. Android
+also installed and launched in a local Windows Android 15 emulator with WHPX.
+The iOS screenshot showed a test ad with no native-ad validator issues. Android
+ad delivery remains unresolved (SDK/advertising privacy-check errors observed).
+These startup checks do not replace full feature or physical-device acceptance.
 
-Native mobile storage and ad changes require device testing. Background execution
-and mobile notifications remain unfinished. Android is development-signed, not a
-production Play release. iOS is not an iPhone IPA or App Store/TestFlight build.
-macOS bundles are ad-hoc signed and not notarized. Windows EXEs are unsigned.
-Linux requires a compatible GTK/WebKitGTK runtime.
+Mobile background execution and notifications remain unfinished. Android previews
+are debug-signed. macOS bundles are ad-hoc signed and not notarized. Publicly
+trusted Windows signing requires configured publisher credentials; self-signed
+internal builds do not establish public trust. Linux Flatpak uses GNOME 49;
+the TAR.GZ requires compatible host libraries.
 
-Renames affect real files, can partially succeed, and have no automatic undo.
-Review destinations before applying. Original project code is Apache 2.0 licensed;
-third-party dependencies, SDKs and provider data retain their own terms.
+Renames affect real files and can partially succeed. Review destinations before
+applying; use recorded history for explicit Undo and inspect its results.
+Original code is Apache 2.0 licensed. Third-party dependencies, SDKs and provider
+data retain their own terms. See README and docs/MOBILE_VALIDATION.md.

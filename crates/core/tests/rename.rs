@@ -298,3 +298,46 @@ fn an_already_correct_file_is_unchanged() {
     rename::apply(&mut plan).unwrap();
     assert!(source.exists());
 }
+
+#[test]
+fn naming_formats_preserve_none_and_plex_and_support_jellyfin() {
+    let show = show();
+    let mut request = PlanRequest::default();
+    assert_eq!(
+        rename::episode_name(&request, &show, &show.episodes[0]).unwrap(),
+        "S01E01 - Pilot"
+    );
+    request.plex = true;
+    assert_eq!(
+        rename::episode_name(&request, &show, &show.episodes[0]).unwrap(),
+        "Example (2020) - S01E01 - Pilot"
+    );
+    // Requests saved before the dropdown was added retain their Plex setting.
+    let mut legacy = serde_json::to_value(&request).unwrap();
+    legacy.as_object_mut().unwrap().remove("jellyfin");
+    let restored: PlanRequest = serde_json::from_value(legacy).unwrap();
+    assert!(restored.plex);
+    assert!(!restored.jellyfin);
+    request.plex = false;
+    request.jellyfin = true;
+    assert_eq!(
+        rename::episode_name(&request, &show, &show.episodes[0]).unwrap(),
+        "Example (2020) S01E01 - Pilot"
+    );
+    let mut no_year = show.clone();
+    no_year.year = None;
+    assert_eq!(
+        rename::episode_name(&request, &no_year, &show.episodes[0]).unwrap(),
+        "Example S01E01 - Pilot"
+    );
+    let directory = tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    fs::create_dir(root.join("s1")).unwrap();
+    write(&root.join("s1/1.mkv"), "video");
+    let files = rename::media_files(&root).unwrap();
+    let mut plan = rename::build_plan(&root, &request, show, &files).unwrap();
+    rename::apply(&mut plan).unwrap();
+    assert!(root
+        .join("Season 01/Example (2020) S01E01 - Pilot.mkv")
+        .exists());
+}

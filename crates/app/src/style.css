@@ -134,6 +134,8 @@ main{display:block;padding:0;margin:0;gap:0}
 /* Keep the workspace within the resized viewport; only panel bodies scroll. */
 html,body,#main{width:100%;height:100%;min-width:0;min-height:0}
 main{height:100dvh;min-height:0;overflow:hidden}
+/* Keep mobile identity and controls below status bars and display cutouts. */
+.mobile-app{padding-top:max(env(safe-area-inset-top,0px),var(--native-safe-top,24px));padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px);background:#111b2b}
 .layout{width:100%;grid-template-rows:auto minmax(0,1fr);grid-template-columns:minmax(240px,min(var(--left-width,340px),30vw)) 10px minmax(280px,1fr) 10px minmax(220px,min(var(--right-width,300px),28vw))}
 .layout>.panel,.layout>.center-column{min-width:0;min-height:0;max-width:100%}
 .controls,.preview{overflow-x:hidden}
@@ -165,3 +167,17 @@ main{height:100dvh;min-height:0;overflow:hidden}
   .dialog .pair{flex-direction:column}
 }
 @media(max-height:600px){.controls,.preview{padding-top:12px}.app-identity{padding-top:12px;padding-bottom:12px}.apply-bar{padding:8px 12px}.apply-bar .hint{display:none}.empty{min-height:100px}}
+
+.feature-block{margin:16px 0;padding:12px 0;border-top:1px solid #2c3b52;min-width:0}
+.feature-block summary{cursor:pointer;font-weight:600;margin-bottom:12px}
+.match-results{display:grid;gap:8px;max-height:360px;overflow:auto;margin-top:12px}
+.match-result{display:flex;align-items:center;text-align:left;gap:12px;width:100%}
+.match-result img{width:44px;height:66px;object-fit:cover;flex-shrink:0}
+.match-result small{display:block;color:#9caac1}
+.pairing-qr{display:block;width:min(100%,260px);height:auto;background:white;margin:12px 0}
+.history-item{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:12px 0;overflow-wrap:anywhere}
+.undo-confirm{padding:12px;background:#18273b;border:1px solid #67899b}
+.artwork-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;max-height:400px;overflow:auto}
+.artwork-choice{display:flex;flex-direction:column;gap:6px;font-size:11px;padding:8px}
+.artwork-choice img{width:100%;height:130px;object-fit:contain}
+.library-tools p{overflow-wrap:anywhere}

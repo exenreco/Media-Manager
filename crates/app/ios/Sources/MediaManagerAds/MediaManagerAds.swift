@@ -127,7 +127,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
 
     private func updatePrivacyButton() {
         let required = ConsentInformation.shared.privacyOptionsRequirementStatus == .required
-        browser?.evaluateJavaScript("document.getElementById('ad-privacy')?.toggleAttribute('hidden', \(!required))")
+        browser?.evaluateJavaScript("document.querySelectorAll('.ad-privacy').forEach(button => button.toggleAttribute('hidden', \(!required)))")
     }
 
     private func initializeAds() {
@@ -167,7 +167,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         let view = makeView(nativeAd)
         adView = view
         browser.window?.addSubview(view)
-        browser.evaluateJavaScript("document.getElementById('native-ad-slot')?.removeAttribute('hidden')")
+        browser.evaluateJavaScript("window.mediaManagerAdSetHidden?.(false)")
         expiry = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in self?.discardAd(); self?.collapse() }
         }
@@ -266,7 +266,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     private func collapse(_ message: String = "No advertisement is available. You can retry.") {
         report(message, retry: true)
         hide()
-        browser?.evaluateJavaScript("document.getElementById('native-ad-slot')?.setAttribute('hidden', '')")
+        browser?.evaluateJavaScript("window.mediaManagerAdSetHidden?.(true)")
     }
     private func discardAd() {
         expiry?.invalidate(); expiry = nil

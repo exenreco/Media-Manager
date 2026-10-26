@@ -221,7 +221,7 @@ the configured root. There is no filesystem browser endpoint in this milestone.
 - Files run first; Plex season folder renames run deepest-first. Table paths show
   the paths used for each operation, before any ancestor folder rename.
 - Execution is not a transaction. A batch can partially succeed and reports
-  per-entry results. There is no automatic rollback, durable journal or undo.
+  per-entry results. Completed operations are journaled. Use Library health & rename history to undo names with conflict checks; failed batches do not roll back automatically.
   If a remote request is interrupted, inspect the library or build a fresh preview.
 - Templates support `{Series Name}`, `{Season}`, `{Season:02d}`, `{Episode}` and
   `{Episode:02d}`. Unknown tokens are rejected. Manual/batch input uses one season;
@@ -307,3 +307,6 @@ while the mobile OS suspends or terminates the app.
 
 This preview is not ready for a five-platform production release until these
 steps pass.
+
+For title matching, anime numbering, companion files, Undo, artwork sources,
+health scans, profiles, and QR pairing, see [Library tools](LIBRARY_TOOLS.md).

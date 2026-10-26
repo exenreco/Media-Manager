@@ -248,6 +248,8 @@ mod tests {
         fs::write(root.join("poster.jpg"), b"existing").unwrap();
         let show = Show {
             artwork: Artwork {
+                alternatives: vec![],
+                warnings: vec![],
                 poster: Some("https://images.example/show.jpg".into()),
                 seasons: [
                     (1, "https://images.example/s1.jpg".into()),

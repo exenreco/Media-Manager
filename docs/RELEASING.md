@@ -47,7 +47,7 @@ and mobile artifacts receive SHA-256 checksum files on the release page.
   the documented Google framework embedding/signing step. A simulator ZIP cannot
   be renamed to IPA or installed on an iPhone.
 - macOS: Developer ID signing and notarization before public production distribution.
-- Windows: activate the prepared [publisher signing workflow](WINDOWS_SIGNING.md)
+- Windows: activate publisher signing in `.github/workflows/release.yml`
   after identity validation; optional installer packaging remains separate.
 - All platforms: native acceptance tests, mobile document/background bridges,
   privacy disclosures, SDK policy review and store approval where applicable.

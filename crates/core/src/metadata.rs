@@ -30,7 +30,7 @@ pub async fn lookup(request: &PlanRequest, file_count: usize) -> Result<Show> {
     if request.name.trim().is_empty() {
         bail!("Enter a show or movie name");
     }
-    if request.movie {
+    if request.movie && !matches!(request.source, Source::Omdb { .. }) {
         return Ok(Show {
             name: request.name.trim().into(),
             year: request.year,
@@ -87,33 +87,122 @@ pub async fn lookup(request: &PlanRequest, file_count: usize) -> Result<Show> {
         show.artwork.seasons.retain(|s, _| *s == season);
     }
     show.episodes.sort_by_key(|e| (e.season, e.number));
-    if show.episodes.is_empty() {
+    if show.episodes.is_empty() && !request.movie {
         bail!("No numbered episodes found for this selection");
+    }
+    if let Some(url) = &request.options.poster_override {
+        validate_artwork_choice(&show.artwork, url)?;
+        show.artwork.poster = Some(url.clone());
+    }
+    for (season, url) in &request.options.season_overrides {
+        validate_artwork_choice(&show.artwork, url)?;
+        show.artwork.seasons.insert(*season, url.clone());
     }
     show.year = show.year.or(request.year);
     Ok(show)
 }
 
-async fn tvmaze(request: &PlanRequest, base: &str, key: &str) -> Result<Show> {
-    let client = client()?;
-    let base = base.trim_end_matches('/');
-    let mut url =
-        Url::parse(&format!("{base}/singlesearch/shows")).context("Invalid provider URL")?;
+fn tvmaze_search_url(request: &PlanRequest, base: &str, key: &str) -> Result<Url> {
+    // Single search can arbitrarily choose between remakes with the same title.
+    let endpoint = if request.year.is_some() {
+        "search/shows"
+    } else {
+        "singlesearch/shows"
+    };
+    let mut url = Url::parse(&format!("{}/{endpoint}", base.trim_end_matches('/')))
+        .context("Invalid provider URL")?;
     if url.scheme() != "https" {
         bail!("Metadata provider must use HTTPS");
     }
-    url.query_pairs_mut().append_pair("q", &request.name);
+    url.query_pairs_mut().append_pair("q", request.name.trim());
     if !key.is_empty() {
         url.query_pairs_mut().append_pair("apikey", key);
     }
-    let result = json(&client, url).await?;
+    Ok(url)
+}
+
+fn select_tvmaze_show(response: Value, year: Option<u32>) -> Result<Value> {
+    let Some(year) = year else {
+        return Ok(response);
+    };
+    response
+        .as_array()
+        .context("Invalid show search results")?
+        .iter()
+        .map(|item| &item["show"])
+        .find(|show| {
+            show["premiered"]
+                .as_str()
+                .and_then(|date| date.get(..4))
+                .and_then(|year| year.parse::<u32>().ok())
+                == Some(year)
+        })
+        .cloned()
+        .with_context(|| {
+            format!("No matching series found for year {year}; check the title and premiere year")
+        })
+}
+
+fn omdb_search_url(request: &PlanRequest, key: &str) -> Result<Url> {
+    let mut url = Url::parse_with_params(
+        "https://www.omdbapi.com/",
+        &[
+            ("apikey", key),
+            ("t", request.name.trim()),
+            ("type", if request.movie { "movie" } else { "series" }),
+        ],
+    )?;
+    if !request.options.selected_id.is_empty() {
+        let id = &request.options.selected_id;
+        if !id.starts_with("tt") || !id[2..].chars().all(|c| c.is_ascii_digit()) {
+            bail!("Invalid IMDb ID");
+        }
+        url.query_pairs_mut().append_pair("i", id);
+    }
+    if let Some(year) = request.year {
+        url.query_pairs_mut().append_pair("y", &year.to_string());
+    }
+    Ok(url)
+}
+
+async fn tvmaze(request: &PlanRequest, base: &str, key: &str) -> Result<Show> {
+    let client = client()?;
+    let base = base.trim_end_matches('/');
+    if Url::parse(base)?.scheme() != "https" {
+        bail!("Metadata provider must use HTTPS");
+    }
+    let result = if request.options.selected_id.is_empty() {
+        let response = json(&client, tvmaze_search_url(request, base, key)?).await?;
+        select_tvmaze_show(response, request.year)?
+    } else {
+        let id = request
+            .options
+            .selected_id
+            .parse::<u64>()
+            .context("Invalid TVMaze show ID")?;
+        let mut url = Url::parse(&format!("{base}/shows/{id}"))?;
+        if !key.is_empty() {
+            url.query_pairs_mut().append_pair("apikey", key);
+        }
+        let result = json(&client, url).await?;
+        if request.year.is_some()
+            && result["premiered"]
+                .as_str()
+                .and_then(|s| s.get(..4))
+                .and_then(|s| s.parse::<u32>().ok())
+                != request.year
+        {
+            bail!("The selected show does not match the entered year; search again");
+        }
+        result
+    };
     let id = result["id"].as_u64().context("Show not found")?;
     let mut url = Url::parse(&format!("{base}/shows/{id}/episodes"))?;
     if !key.is_empty() {
         url.query_pairs_mut().append_pair("apikey", key);
     }
     let episodes = json(&client, url).await?;
-    let episodes = episodes
+    let episodes: Vec<Episode> = episodes
         .as_array()
         .context("Invalid episode list")?
         .iter()
@@ -131,8 +220,40 @@ async fn tvmaze(request: &PlanRequest, base: &str, key: &str) -> Result<Show> {
     }
     // Artwork is optional; an older mirror can still provide episode metadata.
     let seasons = json(&client, seasons_url).await.unwrap_or_default();
+    let mut artwork = tvmaze_artwork(&result, &seasons);
+    let mut images_url = Url::parse(&format!("{base}/shows/{id}/images"))?;
+    if !key.is_empty() {
+        images_url.query_pairs_mut().append_pair("apikey", key);
+    }
+    if let Ok(images) = json(&client, images_url).await {
+        for (index, item) in images
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|item| item["type"] == "poster")
+            .enumerate()
+        {
+            if let Some(url) = poster_url(&item["resolutions"]["original"]["url"]) {
+                artwork.alternatives.push(crate::ArtworkChoice {
+                    label: format!("TVMaze poster {}", index + 1),
+                    url,
+                    season: None,
+                    provider: "TVMaze".into(),
+                });
+            }
+        }
+    }
+    supplement_tmdb(
+        &client,
+        &mut artwork,
+        result["externals"]["imdb"].as_str(),
+        &request.options.tmdb_key,
+        false,
+        &episodes,
+    )
+    .await;
     Ok(Show {
-        artwork: tvmaze_artwork(&result, &seasons),
+        artwork,
         name: result["name"].as_str().unwrap_or(&request.name).into(),
         year: result["premiered"]
             .as_str()
@@ -147,14 +268,7 @@ async fn omdb(request: &PlanRequest, key: &str) -> Result<Show> {
         bail!("Enter your OMDb API key");
     }
     let client = client()?;
-    let url = Url::parse_with_params(
-        "https://www.omdbapi.com/",
-        &[
-            ("apikey", key),
-            ("t", request.name.as_str()),
-            ("type", "series"),
-        ],
-    )?;
+    let url = omdb_search_url(request, key)?;
     let result = json(&client, url).await?;
     if result["Response"] == "False" {
         bail!("OMDb could not find the series; check the name and API key");
@@ -170,7 +284,7 @@ async fn omdb(request: &PlanRequest, key: &str) -> Result<Show> {
         .season
         .map_or_else(|| (1..=count.min(200)).collect::<Vec<_>>(), |s| vec![s]);
     let mut episodes = vec![];
-    for season in seasons {
+    for season in seasons.into_iter().filter(|_| !request.movie) {
         let number = season.to_string();
         let url = Url::parse_with_params(
             "https://www.omdbapi.com/",
@@ -187,11 +301,21 @@ async fn omdb(request: &PlanRequest, key: &str) -> Result<Show> {
             }));
         }
     }
+    let mut artwork = Artwork {
+        poster: poster_url(&result["Poster"]),
+        ..Default::default()
+    };
+    supplement_tmdb(
+        &client,
+        &mut artwork,
+        Some(id),
+        &request.options.tmdb_key,
+        request.movie,
+        &episodes,
+    )
+    .await;
     Ok(Show {
-        artwork: Artwork {
-            poster: poster_url(&result["Poster"]),
-            ..Default::default()
-        },
+        artwork,
         name: result["Title"].as_str().unwrap_or(&request.name).into(),
         year: result["Year"]
             .as_str()
@@ -238,6 +362,8 @@ pub fn tvmaze_artwork(show: &Value, seasons: &Value) -> Artwork {
     }
     Artwork {
         poster: image(show),
+        alternatives: vec![],
+        warnings: vec![],
         seasons: seasons
             .as_array()
             .into_iter()
@@ -294,4 +420,275 @@ pub fn parse_guide(html: &str, fallback_season: u32) -> Vec<Episode> {
         }
     }
     episodes
+}
+
+fn validate_artwork_choice(artwork: &Artwork, url: &str) -> Result<()> {
+    if artwork.poster.as_deref() == Some(url)
+        || artwork.seasons.values().any(|value| value == url)
+        || artwork.alternatives.iter().any(|item| item.url == url)
+    {
+        return Ok(());
+    }
+    bail!("Selected artwork is no longer available from this provider; search again")
+}
+
+pub async fn search(request: &PlanRequest) -> Result<Vec<crate::ShowMatch>> {
+    if request.name.trim().is_empty() {
+        bail!("Enter a title before searching");
+    }
+    let client = client()?;
+    match &request.source {
+        Source::TvMaze | Source::Custom { .. } => {
+            if request.movie {
+                bail!("Select OMDb to search movies");
+            }
+            let (base, key) = match &request.source {
+                Source::Custom { base_url, key } => (base_url.as_str(), key.as_str()),
+                _ => ("https://api.tvmaze.com", ""),
+            };
+            let mut query = request.clone();
+            query.year = Some(0);
+            let response = json(&client, tvmaze_search_url(&query, base, key)?).await?;
+            Ok(response
+                .as_array()
+                .context("Invalid search response")?
+                .iter()
+                .filter_map(|item| {
+                    let show = &item["show"];
+                    let year = show["premiered"]
+                        .as_str()
+                        .and_then(|s| s.get(..4))
+                        .and_then(|s| s.parse().ok());
+                    if request.year.is_some() && request.year != year {
+                        return None;
+                    }
+                    Some(crate::ShowMatch {
+                        id: show["id"].as_u64()?.to_string(),
+                        name: show["name"].as_str()?.into(),
+                        year,
+                        poster: poster_url(&show["image"]["medium"]),
+                        provider: if matches!(request.source, Source::Custom { .. }) {
+                            "Custom TVMaze"
+                        } else {
+                            "TVMaze"
+                        }
+                        .into(),
+                        kind: show["type"].as_str().unwrap_or("Series").into(),
+                    })
+                })
+                .take(30)
+                .collect())
+        }
+        Source::Omdb { key } => {
+            if key.trim().is_empty() {
+                bail!("Enter your OMDb API key");
+            }
+            let mut url = Url::parse_with_params(
+                "https://www.omdbapi.com/",
+                &[
+                    ("apikey", key.as_str()),
+                    ("s", request.name.trim()),
+                    ("type", if request.movie { "movie" } else { "series" }),
+                ],
+            )?;
+            if let Some(year) = request.year {
+                url.query_pairs_mut().append_pair("y", &year.to_string());
+            }
+            let response = json(&client, url).await?;
+            Ok(response["Search"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|show| {
+                    Some(crate::ShowMatch {
+                        id: show["imdbID"].as_str()?.into(),
+                        name: show["Title"].as_str()?.into(),
+                        year: show["Year"]
+                            .as_str()
+                            .and_then(|s| s.get(..4))
+                            .and_then(|s| s.parse().ok()),
+                        poster: poster_url(&show["Poster"]),
+                        provider: "OMDb".into(),
+                        kind: show["Type"].as_str().unwrap_or("Series").into(),
+                    })
+                })
+                .collect())
+        }
+        _ => bail!("Choose TVMaze, OMDb, or a custom API to search for a match"),
+    }
+}
+
+async fn supplement_tmdb(
+    client: &Client,
+    artwork: &mut Artwork,
+    imdb: Option<&str>,
+    key: &str,
+    movie: bool,
+    episodes: &[Episode],
+) {
+    if key.trim().is_empty() {
+        return;
+    }
+    if let Err(error) = tmdb_artwork(client, artwork, imdb, key, movie, episodes).await {
+        artwork
+            .warnings
+            .push(format!("TMDB artwork unavailable: {error}"));
+    }
+}
+async fn tmdb_artwork(
+    client: &Client,
+    artwork: &mut Artwork,
+    imdb: Option<&str>,
+    key: &str,
+    movie: bool,
+    episodes: &[Episode],
+) -> Result<()> {
+    let imdb = imdb.context("This provider has no IMDb ID to verify a TMDB match")?;
+    if !imdb.starts_with("tt") || !imdb[2..].chars().all(|c| c.is_ascii_digit()) {
+        bail!("Invalid provider IMDb ID");
+    }
+    let url = Url::parse_with_params(
+        &format!("https://api.themoviedb.org/3/find/{imdb}"),
+        &[("external_source", "imdb_id"), ("api_key", key)],
+    )?;
+    let matches = json(client, url).await?;
+    let item = matches[if movie { "movie_results" } else { "tv_results" }]
+        .as_array()
+        .and_then(|items| items.first())
+        .context("No verified TMDB match")?;
+    let id = item["id"].as_u64().context("Invalid TMDB ID")?;
+    let kind = if movie { "movie" } else { "tv" };
+    let details = json(
+        client,
+        Url::parse_with_params(
+            &format!("https://api.themoviedb.org/3/{kind}/{id}"),
+            &[("api_key", key), ("append_to_response", "images")],
+        )?,
+    )
+    .await?;
+    let image_url = |value: &Value| {
+        value
+            .as_str()
+            .filter(|s| s.starts_with('/') && !s.contains("..") && !s.contains('?'))
+            .map(|s| format!("https://image.tmdb.org/t/p/original{s}"))
+    };
+    for (index, image) in details["images"]["posters"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(40)
+        .enumerate()
+    {
+        if let Some(url) = image_url(&image["file_path"]) {
+            artwork.alternatives.push(crate::ArtworkChoice {
+                label: format!("TMDB poster {}", index + 1),
+                url,
+                season: None,
+                provider: "TMDB".into(),
+            });
+        }
+    }
+    if artwork.poster.is_none() {
+        artwork.poster = image_url(&details["poster_path"]);
+    }
+    for season in details["seasons"].as_array().into_iter().flatten() {
+        let Some(number) = season["season_number"]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+        else {
+            continue;
+        };
+        if let Some(url) = image_url(&season["poster_path"]) {
+            artwork.alternatives.push(crate::ArtworkChoice {
+                label: format!("TMDB season {number:02}"),
+                url: url.clone(),
+                season: Some(number),
+                provider: "TMDB".into(),
+            });
+            // Different providers may use calendar years or different anime orders.
+            // Only fill matching numbered seasons with the same episode count.
+            let count = episodes.iter().filter(|e| e.season == number).count() as u64;
+            if count > 0 && season["episode_count"].as_u64() == Some(count) {
+                artwork.seasons.entry(number).or_insert(url);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod year_search_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn omitted_year_keeps_title_only_searches() {
+        let request = PlanRequest {
+            name: "The Office".into(),
+            ..Default::default()
+        };
+        let url = tvmaze_search_url(&request, "https://api.tvmaze.com", "").unwrap();
+        assert_eq!(url.path(), "/singlesearch/shows");
+        assert!(!omdb_search_url(&request, "test")
+            .unwrap()
+            .query_pairs()
+            .any(|(key, _)| key == "y"));
+        let show = json!({"id": 1});
+        assert_eq!(select_tvmaze_show(show.clone(), None).unwrap(), show);
+    }
+
+    #[test]
+    fn one_piece_year_selects_anime_without_losing_available_season_artwork() {
+        let results = json!([
+            {"show": {"id": 46065, "name": "One Piece", "premiered": "2023-08-31"}},
+            {"show": {"id": 1505, "name": "One Piece", "premiered": "1999-10-20",
+                "image": {"original": "https://example.com/anime.jpg"}}}
+        ]);
+        let show = select_tvmaze_show(results, Some(1999)).unwrap();
+        assert_eq!(show["id"], 1505);
+        let artwork = tvmaze_artwork(
+            &show,
+            &json!([
+                {"number": 1999, "image": null},
+                {"number": 2024, "image": {"original": "https://example.com/season-2024.jpg"}}
+            ]),
+        );
+        assert_eq!(
+            artwork.poster.as_deref(),
+            Some("https://example.com/anime.jpg")
+        );
+        assert!(artwork.seasons.contains_key(&2024));
+        assert!(!artwork.seasons.contains_key(&1999));
+    }
+
+    #[test]
+    fn supplied_year_selects_the_correct_remake_and_rejects_other_years() {
+        let request = PlanRequest {
+            name: "The Office".into(),
+            year: Some(2005),
+            ..Default::default()
+        };
+        let url = tvmaze_search_url(&request, "https://example.com/api/", "test").unwrap();
+        assert_eq!(url.path(), "/api/search/shows");
+        assert!(url
+            .query_pairs()
+            .any(|(key, value)| key == "q" && value == "The Office"));
+        assert!(url
+            .query_pairs()
+            .any(|(key, value)| key == "apikey" && value == "test"));
+        let results = json!([
+            {"show": {"id": 1, "premiered": "2001-07-09"}},
+            {"show": {"id": 2, "premiered": null}},
+            {"show": {"id": 3, "premiered": "2005-03-24"}}
+        ]);
+        assert_eq!(
+            select_tvmaze_show(results.clone(), request.year).unwrap()["id"],
+            3
+        );
+        assert!(select_tvmaze_show(results, Some(2020)).is_err());
+        assert!(omdb_search_url(&request, "test")
+            .unwrap()
+            .query_pairs()
+            .any(|(key, value)| key == "y" && value == "2005"));
+    }
 }

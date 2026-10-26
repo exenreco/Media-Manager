@@ -3,11 +3,14 @@
 mod ads;
 mod backend;
 mod branding;
+mod library_tools;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 mod mobile_storage;
 mod notifications;
+mod pairing;
 mod poster;
 mod preview;
+mod profiles;
 mod session;
 
 use backend::Connection;
@@ -34,6 +37,7 @@ struct Form {
     season: String,
     movie: bool,
     plex: bool,
+    jellyfin: bool,
     folder: String,
     source: String,
     key: String,
@@ -42,6 +46,7 @@ struct Form {
     guide: String,
     template: String,
     download_posters: bool,
+    options: tv_manager_core::LibraryOptions,
 }
 impl Default for Form {
     fn default() -> Self {
@@ -51,6 +56,7 @@ impl Default for Form {
             season: String::new(),
             movie: false,
             plex: false,
+            jellyfin: false,
             folder: String::new(),
             source: "tvmaze".into(),
             key: String::new(),
@@ -59,6 +65,11 @@ impl Default for Form {
             guide: String::new(),
             template: "{Series Name} - S{Season:02d}E{Episode:02d}".into(),
             download_posters: false,
+            options: tv_manager_core::LibraryOptions {
+                companions: true,
+                absolute_start: 1,
+                ..Default::default()
+            },
         }
     }
 }
@@ -82,6 +93,7 @@ impl Form {
         } else {
             Some(
                 self.year
+                    .trim()
                     .parse::<u32>()
                     .map_err(|_| anyhow::anyhow!("Enter a valid year"))?,
             )
@@ -112,8 +124,10 @@ impl Form {
             season,
             movie: self.movie,
             plex: self.plex,
+            jellyfin: self.jellyfin,
             source,
             download_posters: self.download_posters,
+            options: self.options.clone(),
         })
     }
 }
@@ -143,21 +157,14 @@ fn main() {
 
 #[component]
 fn App() -> Element {
-    let initial_session = use_hook(|| session::load().map_err(|e| e.to_string()));
-    let mut resume = use_signal(|| initial_session.as_ref().ok().cloned().flatten());
-    let mut persistence_ready = use_signal(|| resume.read().is_none());
+    let mut resume = use_signal(|| None::<session::Session>);
+    let mut persistence_ready = use_signal(|| false);
     let mut form = use_signal(Form::default);
     let mut connection = use_signal(Connection::default);
     let mut plan = use_signal(|| None::<RenamePlan>);
     let mut snapshot = use_signal(|| None::<(Form, Connection)>);
     let mut busy = use_signal(|| false);
-    let mut message = use_signal(|| {
-        if initial_session.is_err() {
-            "The previous workspace could not be read. You can start a new workspace.".into()
-        } else {
-            String::new()
-        }
-    });
+    let mut message = use_signal(String::new);
     let mut persistence_error = use_signal(String::new);
     let mut confirming = use_signal(|| false);
     let mut consumed = use_signal(|| false);
@@ -177,9 +184,35 @@ fn App() -> Element {
             not(any(target_os = "android", target_os = "ios"))
         ))
     });
+    let mut startup_progress = use_signal(|| 10u8);
+    let mut splash_artwork_ready = use_signal(|| false);
     use_future(move || async move {
+        // Yield to the first render so the splash can paint before disk/decryption work.
+        tokio::task::yield_now().await;
+        let saved = tokio::task::spawn_blocking(session::load).await;
+        match saved {
+            Ok(Ok(previous)) => {
+                persistence_ready.set(previous.is_none());
+                resume.set(previous);
+            }
+            _ => {
+                message.set(
+                    "The previous workspace could not be read. You can start a new workspace."
+                        .into(),
+                );
+                persistence_ready.set(true);
+            }
+        }
+        startup_progress.set(70);
         if splash_visible() {
-            tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+            while !splash_artwork_ready() {
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+            }
+        }
+        startup_progress.set(100);
+        // Let the completed bar paint before switching to the dashboard.
+        if splash_visible() {
+            tokio::time::sleep(std::time::Duration::from_millis(180)).await;
             if splash_visible() {
                 branding::finish_splash();
                 splash_visible.set(false);
@@ -277,11 +310,14 @@ fn App() -> Element {
     let groups = preview::group_by_season(&rows, &missing, preview_request.movie);
     let artwork_stale = snapshot.read().as_ref().is_some_and(|(f, _)| {
         f.name != form_value.name
+            || f.year != form_value.year
             || f.source != form_value.source
             || f.season != form_value.season
             || f.movie != form_value.movie
             || f.key != form_value.key
             || f.custom != form_value.custom
+            || f.options.selected_id != form_value.options.selected_id
+            || f.options.tmdb_key != form_value.options.tmdb_key
     });
     let artwork = if artwork_stale {
         Default::default()
@@ -291,7 +327,10 @@ fn App() -> Element {
     let poster_title = if artwork_stale || preview_show.name.is_empty() {
         "Poster preview".into()
     } else {
-        preview_show.name.clone()
+        preview_show.year.map_or_else(
+            || preview_show.name.clone(),
+            |year| format!("{} ({year})", preview_show.name),
+        )
     };
     let seasons: std::collections::BTreeSet<_> = if artwork_stale {
         Default::default()
@@ -310,7 +349,7 @@ fn App() -> Element {
     let active_playback = playback.read().clone();
 
     if splash_visible() {
-        return rsx! { branding::Splash { oncontinue: move |_| {
+        return rsx! { branding::Splash { progress: startup_progress(), onartworkready: move |_| splash_artwork_ready.set(true), oncontinue: move |_| {
             branding::finish_splash();
             splash_visible.set(false);
         } } };
@@ -339,10 +378,13 @@ fn App() -> Element {
                         div { class: "library-toggle", role: "group", "aria-label": "Library type",
                             button { r#type: "button", class: if form_value.movie { "" } else { "selected" },
                                 "aria-pressed": (!form_value.movie).to_string(),
-                                onclick: move |_| form.write().movie = false, "TV Shows" }
+                                onclick: move |_| {let mut f=form.write(); f.movie=false; f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear();}, "TV Shows" }
                             button { r#type: "button", class: if form_value.movie { "selected" } else { "" },
                                 "aria-pressed": form_value.movie.to_string(),
-                                onclick: move |_| form.write().movie = true, "Movies" }
+                                onclick: move |_| {let mut f=form.write(); f.movie=true; f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear();}, "Movies" }
+                        }
+                        if cfg!(any(target_os = "android", target_os = "ios")) {
+                            ads::NativeAdSlot {}
                         }
                         section { class: "settings-group",
                         h2 { "Connect your library" }
@@ -394,14 +436,49 @@ fn App() -> Element {
                         label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
                             oninput: move |e| form.write().folder = e.value() } }
                         }
+                        library_tools::Pairing {connection,busy,message}
+                        section { class: "settings-group",
+                            h2 { "API settings" }
+                            if !form_value.movie {
+                            label { "Episode source"
+                                select { value: "{form_value.source}", onchange: move |e| { let mut f=form.write(); f.source=e.value(); f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear(); },
+                                    option { value: "tvmaze", "TVMaze" }
+                                    option { value: "omdb", "OMDb" }
+                                    option { value: "custom", "Custom TVMaze-compatible API" }
+                                    option { value: "manual", "Manual titles" }
+                                    option { value: "batch", "Batch sequence" }
+                                    option { value: "web", "Episode guide URL" }
+                                }
+                            }
+                            div { class: "provider-settings",
+                            h3 { "Provider configuration" }
+                            if form_value.source == "tvmaze" { p { class: "hint", "TVMaze is ready to use. No API key required." } }
+                            if matches!(form_value.source.as_str(), "manual" | "batch" | "web") { p { class: "hint", "Configure titles, templates or a guide URL in Naming details." } }
+                            if form_value.source == "custom" {
+                                label { "API base URL" input { value: "{form_value.custom}", placeholder: "https://…",
+                                    oninput: move |e| {let mut f=form.write();f.custom=e.value();f.options.selected_id.clear();f.options.poster_override=None;f.options.season_overrides.clear();} } }
+                            }
+                            if form_value.source == "omdb" || form_value.source == "custom" {
+                                label { "API key" input { r#type: "password", value: "{form_value.key}", autocomplete: "off",
+                                    oninput: move |e| form.write().key = e.value() } }
+                            }
+                            }
+                        }
+                            else {
+                                label {"Movie source" select {value:if form_value.source=="omdb" {"omdb"}else{"manual"},onchange:move|e|{let mut f=form.write();f.source=e.value();f.options.selected_id.clear();},option {value:"manual","Entered title and year"} option {value:"omdb","OMDb"}}}
+                                if form_value.source=="omdb" {label {"OMDb API key" input {r#type:"password",value:"{form_value.key}",oninput:move|e|form.write().key=e.value()}}}
+                            }
+                            label {"TMDB artwork API key (optional)" input {r#type:"password",value:"{form_value.options.tmdb_key}",autocomplete:"off",oninput:move|e|form.write().options.tmdb_key=e.value()}}
+                            p {class:"hint","Adds verified TMDB artwork using the matched IMDb ID. Different season orders require an explicit poster choice."}
+                        }
                         section { class: "settings-group naming-group",
                         h2 { "Naming details" }
                         label { if form_value.movie { "Movie title" } else { "Series name" }
-                            input { value: "{form_value.name}", placeholder: "Enter a title", oninput: move |e| form.write().name = e.value() }
+                            input { value: "{form_value.name}", placeholder: "Enter a title", oninput: move |e| { let mut f=form.write(); f.name=e.value(); f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear(); } }
                         }
                         div { class: "pair",
                             label { "Year (optional)" input { r#type: "number", min: "1800", max: "9999", value: "{form_value.year}",
-                                oninput: move |e| form.write().year = e.value() } }
+                                oninput: move |e| { let mut f=form.write(); f.year=e.value(); f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear(); } } }
                             if !form_value.movie {
                                 label { "Season (optional)" input { r#type: "number", min: "0", value: "{form_value.season}",
                                     placeholder: if matches!(form_value.source.as_str(), "manual" | "batch") { "1" } else { "All seasons" },
@@ -417,10 +494,25 @@ fn App() -> Element {
                                 }
                             }
                         }
-                        label { class: "check", input { r#type: "checkbox", checked: form_value.plex,
-                            onchange: move |e| form.write().plex = e.checked() }
-                            if form_value.movie { "Plex movie naming (title and year)" } else { "Plex episode naming" }
+                        if matches!(form_value.source.as_str(),"tvmaze"|"omdb"|"custom") && (!form_value.movie || form_value.source=="omdb") {
+                            library_tools::MatchPicker {form,connection,busy,message}
                         }
+                        library_tools::NumberingOptions {form}
+                        label { "Naming format"
+                            select { value: if form_value.jellyfin { "jellyfin" } else if form_value.plex { "plex" } else { "none" },
+                                onchange: move |e| {
+                                    let value = e.value();
+                                    let mut current = form.write();
+                                    current.plex = value == "plex";
+                                    current.jellyfin = value == "jellyfin";
+                                },
+                                option { value: "none", "None" }
+                                option { value: "plex", if form_value.movie { "Plex movie naming" } else { "Plex episode naming" } }
+                                option { value: "jellyfin", "Jellyfin naming" }
+                            }
+                        }
+                        p {class:"hint",if form_value.movie {if form_value.plex || form_value.jellyfin {"Example: Movie (2020).mkv"}else{"Example: Movie.mkv"}}else if form_value.jellyfin {"Example: Series (2020) S01E01 - Pilot.mkv"}else if form_value.plex {"Example: Series (2020) - S01E01 - Pilot.mkv"}else {"Example: S01E01 - Pilot.mkv"}}
+                        library_tools::Profiles {form,message}
                         if !form_value.movie {
                             if form_value.source == "manual" {
                                 label { "Episode titles, one per line" textarea { rows: "6", value: "{form_value.titles}",
@@ -438,39 +530,7 @@ fn App() -> Element {
                             }
                         }
                         }
-                        section { class: "settings-group",
-                            h2 { "API settings" }
-                            if !form_value.movie {
-                            label { "Episode source"
-                                select { value: "{form_value.source}", onchange: move |e| form.write().source = e.value(),
-                                    option { value: "tvmaze", "TVMaze" }
-                                    option { value: "omdb", "OMDb" }
-                                    option { value: "custom", "Custom TVMaze-compatible API" }
-                                    option { value: "manual", "Manual titles" }
-                                    option { value: "batch", "Batch sequence" }
-                                    option { value: "web", "Episode guide URL" }
-                                }
-                            }
-                            div { class: "provider-settings",
-                            h3 { "Provider configuration" }
-                            if form_value.source == "tvmaze" { p { class: "hint", "TVMaze is ready to use. No API key required." } }
-                            if matches!(form_value.source.as_str(), "manual" | "batch" | "web") { p { class: "hint", "Configure titles, templates or a guide URL in Naming details." } }
-                            if form_value.source == "custom" {
-                                label { "API base URL" input { value: "{form_value.custom}", placeholder: "https://…",
-                                    oninput: move |e| form.write().custom = e.value() } }
-                            }
-                            if form_value.source == "omdb" || form_value.source == "custom" {
-                                label { "API key" input { r#type: "password", value: "{form_value.key}", autocomplete: "off",
-                                    oninput: move |e| form.write().key = e.value() } }
-                            }
-                            }
-                        }
-                            else { p { class: "hint", "Movies use the title and year entered in Naming details." } }
-                        }
                         div { class: "settings-footer",
-                        if cfg!(any(target_os = "android", target_os = "ios")) {
-                            ads::NativeAdSlot {}
-                        }
                         button { class: "primary", disabled: busy(), onclick: move |_| {
                             let f = form.read().clone();
                             let c = connection.read().clone();
@@ -487,6 +547,7 @@ fn App() -> Element {
                                 busy.set(false);
                             });
                         }, if busy() { "Working…" } else { "Build rename preview" } }
+                        p {class:"hint",role:"status","{message}"}
                         }
                     }
                 }
@@ -502,8 +563,13 @@ fn App() -> Element {
                 }
                 div { class: "center-column",
                 section { class: "panel preview", id: "rename-preview",
+                    library_tools::HistoryHealth {connection,form,plan,busy,message,consumed,changed}
                     div { class: "preview-heading", h2 { "Review & rename" } span { class: "badge", "{ready} ready" } }
-                    p { class: "hint", "Files are paired in natural filename order. Review the mapping carefully, especially if episodes are missing." }
+                    p { class: "hint",match preview_request.options.numbering {
+                        tv_manager_core::Numbering::Sequence=>"Files are paired in natural filename order. Review carefully if episodes are missing.",
+                        tv_manager_core::Numbering::Detected=>"Episode numbers are read from filenames. Custom mappings take precedence. Review every match.",
+                        tv_manager_core::Numbering::Absolute=>"Absolute numbers map to the provider's episode order. Confirm anime ordering and specials before applying."
+                    }}
                     p { role: "status", class: "status", "{message}" }
                     if !persistence_error().is_empty() { p { role: "alert", class: "notice", "{persistence_error}" } }
                     if changed { p { class: "notice", "Settings changed. Build a new preview before applying." } }
@@ -541,7 +607,7 @@ fn App() -> Element {
                                                     }
                                                 }
                                                 button { r#type: "button", class: "row-action", title: "Play media file", "aria-label": "Play media file",
-                                                    disabled: busy() || changed || !matches!(row.source.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str(), "mp4" | "mkv" | "avi"),
+                                                    disabled: busy() || changed || !tv_manager_core::rename::is_video(&row.source),
                                                     onclick: move |_| {
                                                         let Some(p) = plan.read().clone() else { return; };
                                                         let c = snapshot.read().as_ref().map(|(_, c)| c.clone()).unwrap_or_else(|| connection.read().clone());
@@ -596,7 +662,7 @@ fn App() -> Element {
             footer { class: "apply-bar", role: "toolbar", "aria-label": "Library actions",
                 div {
                     strong { "{ready} renames · {poster_count} poster downloads ready" }
-                    p { class: "hint", "Renames affect real files. This preview has no automatic undo." }
+                    p { class: "hint", "Review before applying. Rename history keeps original names for Undo." }
                 }
                 div { class: "apply-actions",
                     button { class: "secondary single-column-only", r#type: "button", "aria-controls": "poster-naming-settings", onclick: move |_| active_panel.set("posters"), "← Back" }
@@ -625,6 +691,9 @@ fn App() -> Element {
                             } else if artwork.poster.is_none() && artwork.seasons.is_empty() {
                                 p { class: "hint", "No posters available from this source." }
                             }
+                            if !artwork_stale && !seasons.is_empty() && seasons.iter().any(|season| !artwork.seasons.contains_key(season)) {
+                                p { class: "hint", "The selected provider has no poster for some seasons. Those seasons display a placeholder." }
+                            }
                             div { class: "poster-download-option",
                                 label { class: "check", input { r#type: "checkbox", checked: form_value.download_posters,
                                     onchange: move |e| form.write().download_posters = e.checked() } "Download posters" }
@@ -641,6 +710,10 @@ fn App() -> Element {
                                 a { class: "poster-credit", href: "https://www.tvmaze.com", target: "_blank", rel: "noopener noreferrer", "Artwork via TVMaze" }
                             }
                         }
+                    }
+                    library_tools::ArtworkPicker {form,connection,plan,snapshot,busy,message}
+                    if cfg!(any(target_os = "android", target_os = "ios")) {
+                        ads::NativeAdSlot { posters: true }
                     }
                     nav { class: "poster-navigation single-column-only", "aria-label": "Preview steps",
                         button { class: "secondary", r#type: "button", disabled: busy() || confirming(), "aria-controls": "library-settings", onclick: move |_| active_panel.set("settings"), "← Back" }

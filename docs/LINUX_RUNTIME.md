@@ -11,7 +11,7 @@ Install Flatpak using your Linux distribution's package manager, then download
 the `.flatpak` asset from the project's GitHub release:
 
 ```sh
-flatpak install --user ./Media-Manager-0.1.3-linux-x86_64.flatpak
+flatpak install --user ./Media-Manager-0.1.4-linux-x86_64.flatpak
 flatpak run com.tvshowmanager.app
 flatpak update --user
 ```
@@ -38,7 +38,7 @@ Configure its existing root/token environment settings before exposing it.
 
 Install `org.gnome.Platform//49` and `org.gnome.Sdk//49` from Flathub. Build the
 app/server on Ubuntu 24.04 and run `python scripts/package_flatpak.py --version
-0.1.3`. The helper checks dynamic dependencies inside the **runtime**, not merely
+0.1.4`. The helper checks dynamic dependencies inside the **runtime**, not merely
 the SDK, and packages the small app-specific libraries absent from that runtime.
 GTK, WebKitGTK, libc and graphics drivers are never copied from Ubuntu.
 

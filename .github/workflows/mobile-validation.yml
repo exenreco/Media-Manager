@@ -1,0 +1,167 @@
+name: Mobile validation (emulator and simulator)
+
+on:
+  push:
+    branches: ['codex/mobile-validation-*']
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to validate from this workflow revision
+        required: true
+        default: both
+        type: choice
+        options: [both, android, ios]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  bridge-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node --test crates/app/android/tests/native-ad.test.cjs crates/app/tests/mobile-storage.test.cjs
+      - run: python -m unittest discover -s crates/app/ios/tests -p 'test_*.py'
+      - run: python -m unittest discover -s scripts/tests -p 'test_mobile_*.py'
+
+  android:
+    if: github.event_name == 'push' || inputs.platform == 'both' || inputs.platform == 'android'
+    needs: bridge-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install native Android toolchain
+        run: |
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - run: bash scripts/install-dioxus.sh
+      - name: Configure Kotlin and app icons
+        run: |
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home/init.d"
+          cp crates/app/android/kotlin-toolchain.init.gradle "$gradle_home/init.d/media-manager-kotlin.gradle"
+          echo "GRADLE_USER_HOME=$gradle_home" >> "$GITHUB_ENV"
+          echo "MEDIA_MANAGER_ANDROID_ICONS=$GITHUB_WORKSPACE/assets/branding/icons/android" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build x86_64 emulator APK with test ads
+        working-directory: crates/app
+        run: dx build --platform android --target x86_64-linux-android --no-default-features --features mobile
+      - name: Collect the current build
+        run: |
+          apk=$(find target/dx -path '*/outputs/apk/debug/*.apk' -type f | head -n 1)
+          test -n "$apk"
+          mkdir -p target/mobile-validation/android
+          cp "$apk" target/mobile-validation/android/Media-Manager-emulator.apk
+          echo "SMOKE_APK=$GITHUB_WORKSPACE/target/mobile-validation/android/Media-Manager-emulator.apk" >> "$GITHUB_ENV"
+      - name: Enable KVM for this disposable CI runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install and launch in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          disable-animations: true
+          script: python3 scripts/mobile_smoke.py --platform android --app "$SMOKE_APK" --evidence target/mobile-validation/android
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-emulator-launch-evidence
+          path: target/mobile-validation/android/
+          if-no-files-found: warn
+          retention-days: 14
+
+  ios:
+    if: github.event_name == 'push' || inputs.platform == 'both' || inputs.platform == 'ios'
+    needs: bridge-checks
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: bash scripts/install-dioxus.sh
+      - uses: Swatinem/rust-cache@v2
+      - name: Build iOS Simulator app with test ads
+        working-directory: crates/app
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: '15.0'
+        run: dx build --platform ios --target aarch64-apple-ios-sim --no-default-features --features mobile
+      - name: Embed frameworks and sign the simulator app
+        run: |
+          app=$(find target/dx -type d -name '*.app' | head -n 1)
+          artifacts=$(find target -type d -path '*/mediamanagerads/.build/artifacts' | head -n 1)
+          test -n "$app" && test -n "$artifacts"
+          python3 crates/app/ios/embed_ad_frameworks.py --app "$app" --artifacts "$artifacts" --sdk iphonesimulator --arch arm64 --identity -
+          echo "SMOKE_IOS_APP=$GITHUB_WORKSPACE/$app" >> "$GITHUB_ENV"
+      - name: Create a disposable iPhone simulator
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          def read(kind):
+              return json.loads(subprocess.check_output(['xcrun','simctl','list',kind,'--json']))[kind]
+          runtimes=[r for r in read('runtimes') if r.get('isAvailable') and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
+          runtime=max(runtimes,key=lambda r:tuple(int(n) for n in r['version'].split('.')))
+          types=[t for t in read('devicetypes') if t['name'].startswith('iPhone')]
+          device=subprocess.check_output(['xcrun','simctl','create','Media Manager Validation',next((t['identifier'] for t in types if t['name']=='iPhone 16'),types[-1]['identifier']),runtime['identifier']],text=True).strip()
+          with open(os.environ['GITHUB_ENV'],'a') as output:
+              output.write('SMOKE_SIMULATOR='+device+'\n')
+          subprocess.check_call(['xcrun','simctl','boot',device])
+          subprocess.check_call(['xcrun','simctl','bootstatus',device,'-b'])
+          PY
+      - name: Install and launch in iOS Simulator
+        run: python3 scripts/mobile_smoke.py --platform ios --device "$SMOKE_SIMULATOR" --app "$SMOKE_IOS_APP" --evidence target/mobile-validation/ios
+      - name: Archive simulator app for diagnostics
+        if: always() && env.SMOKE_IOS_APP != ''
+        run: |
+          mkdir -p target/mobile-validation/ios
+          ditto -c -k --sequesterRsrc --keepParent "$SMOKE_IOS_APP" target/mobile-validation/ios/Media-Manager-simulator.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-launch-evidence
+          path: target/mobile-validation/ios/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove only the simulator created by this job
+        if: always()
+        run: |
+          if [ -n "${SMOKE_SIMULATOR:-}" ]; then
+            xcrun simctl shutdown "$SMOKE_SIMULATOR" || true
+            xcrun simctl delete "$SMOKE_SIMULATOR"
+          fi

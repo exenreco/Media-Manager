@@ -68,6 +68,7 @@ class MainActivity : WryActivity() {
                 ?: return@addWebMessageListener
             when (data.optString("type")) {
                 "bounds" -> {
+                    updateSafeArea(webView)
                     bounds = data
                     positionAd()
                     if (!started && data.optBoolean("eligible") && foreground) {
@@ -97,6 +98,23 @@ class MainActivity : WryActivity() {
         storage.result(requestCode, resultCode, data)
     }
 
+    private fun updateSafeArea(web: WebView) {
+        val insets = web.rootWindowInsets ?: return
+        val top = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            insets.getInsets(android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.displayCutout()).top
+        } else {
+            @Suppress("DEPRECATION")
+            val statusTop = insets.systemWindowInsetTop
+            val cutoutTop = if (android.os.Build.VERSION.SDK_INT >= 28) insets.displayCutout?.safeInsetTop ?: 0 else 0
+            maxOf(statusTop, cutoutTop)
+        }
+        val origin = IntArray(2)
+        web.getLocationInWindow(origin)
+        // Count only overlap: some Android windows already inset the WebView.
+        val cssTop = maxOf(0, top - origin[1]) / resources.displayMetrics.density
+        web.evaluateJavascript("document.documentElement.style.setProperty('--native-safe-top', '${cssTop}px')", null)
+    }
+
     private fun requestConsent() {
         if (dead || consentInFlight) return
         consentInFlight = true
@@ -123,7 +141,7 @@ class MainActivity : WryActivity() {
         val required = consent?.privacyOptionsRequirementStatus ==
             ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED
         browser?.evaluateJavascript(
-            "document.getElementById('ad-privacy')?.toggleAttribute('hidden', ${!required})", null)
+            "document.querySelectorAll('.ad-privacy').forEach(button => button.toggleAttribute('hidden', ${!required}))", null)
     }
 
     private fun initializeAds() {
@@ -157,7 +175,7 @@ class MainActivity : WryActivity() {
                     adView = makeAdView(ad)
                     findViewById<FrameLayout>(android.R.id.content).addView(adView)
                     browser?.evaluateJavascript(
-                        "document.getElementById('native-ad-slot')?.removeAttribute('hidden')", null)
+                        "window.mediaManagerAdSetHidden?.(false)", null)
                     report("")
                     positionAd()
                 }
@@ -271,7 +289,7 @@ class MainActivity : WryActivity() {
         report(message, true)
         adView?.visibility = View.GONE
         browser?.evaluateJavascript(
-            "document.getElementById('native-ad-slot')?.setAttribute('hidden', '')", null)
+            "window.mediaManagerAdSetHidden?.(true)", null)
     }
 
     private fun discardAd() {
@@ -319,10 +337,14 @@ private class LocalStorage(private val activity: MainActivity) {
         activity.runOnUiThread { web.evaluateJavascript(script, null) }
     }
     fun handle(command: JSONObject, web: WebView) {
-        if (command.optString("op") == "pick") {
+        if (command.optString("op") == "pick" || command.optString("op") == "pickImage") {
             if (pending != null) { reply(web,command,JSONObject().put("error","A folder picker is already open")); return }
             pending = Pair(command, web)
             try {
+                if (command.optString("op") == "pickImage") {
+                    activity.startActivityForResult(android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply { type="image/*"; addCategory(android.content.Intent.CATEGORY_OPENABLE) },requestCode)
+                    return
+                }
                 activity.startActivityForResult(android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                     addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION or android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
                 },requestCode)
@@ -340,6 +362,16 @@ private class LocalStorage(private val activity: MainActivity) {
         try {
             val uri=data?.data
             require(result == android.app.Activity.RESULT_OK && uri != null) { "Folder selection cancelled" }
+            if (command.optString("op") == "pickImage") {
+                executor.execute {
+                    try {
+                        val bytes=java.io.ByteArrayOutputStream()
+                        resolver.openInputStream(uri!!).use { stream -> require(stream!=null); val buffer=ByteArray(65536);while(true){val count=stream.read(buffer);if(count<0)break;require(bytes.size()+count<=10*1024*1024){"QR image exceeds 10 MB"};bytes.write(buffer,0,count)} }
+                        reply(web,command,JSONObject().put("data",android.util.Base64.encodeToString(bytes.toByteArray(),android.util.Base64.NO_WRAP)))
+                    } catch(error:Exception){reply(web,command,JSONObject().put("error",error.message))}
+                }
+                return
+            }
             val flags=data!!.flags and (android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             require(flags and android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0) { "This folder provider did not grant write access" }
             resolver.takePersistableUriPermission(uri,flags)
@@ -397,7 +429,14 @@ private class LocalStorage(private val activity: MainActivity) {
                     }
                 }
                 val doc=resolve(tree,"");walk(doc,"",0)
-                return JSONObject().put("entries",entries).put("name",doc.name).put("cache",activity.cacheDir.absolutePath)
+                return JSONObject().put("entries",entries).put("name",doc.name).put("cache",activity.cacheDir.absolutePath).put("state",activity.filesDir.absolutePath)
+            }
+            "hash" -> {
+                val doc=resolve(tree,command.getString("path"));require(!doc.dir)
+                val digest=java.security.MessageDigest.getInstance("SHA-256")
+                resolver.openInputStream(doc.uri).use {stream -> require(stream!=null);val buffer=ByteArray(65536);while(true){val count=stream.read(buffer);if(count<0)break;digest.update(buffer,0,count)}}
+                val after=read(tree,doc.id);require(after.size==doc.size && after.modified==doc.modified){"File changed while scanning"}
+                return JSONObject().put("sha256",digest.digest().joinToString(""){"%02x".format(it)})
             }
             "rename" -> {
                 val path=command.getString("path");val names=parts(path);require(names.isNotEmpty())
