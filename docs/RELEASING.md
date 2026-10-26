@@ -4,9 +4,9 @@
 
 The `Platform releases` workflow runs when a version tag such as `v0.1.0` is pushed.
 It can also rebuild an existing tag through Actions → Platform releases → Run workflow;
-choose all platforms or just desktop, Android or iOS when retrying packaging.
-The application source is always checked out at the requested tag. Mobile
-packaging helpers come from the workflow revision, so packaging-only
+choose all platforms, desktop, Windows, Linux runtime, Android or iOS when retrying packaging.
+The application source is always checked out at the requested tag. Mobile, Windows
+and managed Linux runtime packaging helpers come from the workflow revision, so packaging-only
 repairs can rebuild an existing version without moving its tag.
 The tag must exactly match `[workspace.package].version` in Cargo.toml.
 
@@ -23,10 +23,11 @@ The workflow publishes no signing secrets and does not force-push or move tags.
 
 | Asset | Build host / target | Distribution |
 | --- | --- | --- |
-| Windows x64 ZIP | windows-latest / native x64 | Portable EXEs; no installer/code-signing certificate |
+| Windows x64 ZIP | windows-latest / native x64 | Conditional, verified Authenticode signing; unsigned until configured |
 | macOS ARM64 ZIP | macos-15 / Apple Silicon | Ad-hoc signed app bundle and server |
 | macOS Intel ZIP | macos-15-intel / x64 | Ad-hoc signed app bundle and server |
 | Linux x64 TAR.GZ | ubuntu-24.04 / x64 | Portable binaries; GTK/WebKitGTK runtime required |
+| Linux x64 Flatpak | ubuntu-24.04 / GNOME 49 | Managed GTK/WebKitGTK runtime; startup checked under Xvfb |
 | Android ARM64 APK | ubuntu-24.04 / aarch64-linux-android | Debug-signed preview, Google test ads |
 | iOS ARM64 Simulator ZIP | macos-15 / aarch64-apple-ios-sim | Simulator only, ad-hoc signed, Google test ads |
 
@@ -46,7 +47,8 @@ and mobile artifacts receive SHA-256 checksum files on the release page.
   the documented Google framework embedding/signing step. A simulator ZIP cannot
   be renamed to IPA or installed on an iPhone.
 - macOS: Developer ID signing and notarization before public production distribution.
-- Windows: code signing and optional installer packaging.
+- Windows: activate the prepared [publisher signing workflow](WINDOWS_SIGNING.md)
+  after identity validation; optional installer packaging remains separate.
 - All platforms: native acceptance tests, mobile document/background bridges,
   privacy disclosures, SDK policy review and store approval where applicable.
 
@@ -61,3 +63,6 @@ Run the commands in README and verify the package helper on the intended native
 host. Do not claim support from a cross-target check alone. Release pipeline jobs
 are the source of truth for native compilation; successful compilation does not
 prove mobile device behavior or policy approval.
+
+See [managed Linux runtime packaging](LINUX_RUNTIME.md) for Flatpak installation,
+permissions, runtime updates and source archives for redistributed libraries.

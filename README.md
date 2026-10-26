@@ -31,7 +31,7 @@ build is not a substitute for native UI and device testing.
 | --- | --- | --- |
 | Windows x64 | Portable ZIP, app and server | Requires Windows native prerequisites and WebView2 |
 | macOS Apple Silicon / Intel | ZIP with app bundle and server | Ad-hoc signed; not Developer ID signed or notarized |
-| Linux x64 | TAR.GZ, app and server | Built on Ubuntu 24.04; requires compatible GTK/WebKitGTK runtime |
+| Linux x64 | Flatpak with managed runtime, or TAR.GZ | Flatpak uses GNOME 49 GTK/WebKitGTK; TAR.GZ requires host libraries |
 | Android ARM64 | Installable debug-signed preview APK | Test ads; new native folder access awaits device validation; background execution pending |
 | iOS ARM64 Simulator | Simulator app ZIP | For Xcode Simulator, not an installable iPhone IPA; device signing remains pending |
 
@@ -86,6 +86,16 @@ cargo run -p tv-manager-server --locked
 The server listens on `127.0.0.1:8787` by default. For access from another device,
 put it behind an HTTPS reverse proxy and configure the app with its URL and bearer
 token. Keep the token private. See [server configuration and API](docs/USER_GUIDE.md#run-the-remote-backend).
+
+## Signing and Linux runtime
+
+Windows publisher signing is prepared for Azure Artifact Signing but remains
+disabled until an identity-validated account and certificate profile are configured.
+See [Windows signing setup](docs/WINDOWS_SIGNING.md).
+
+For Linux, use the Flatpak download to install a compatible GTK/WebKitGTK runtime
+automatically. See [installation and runtime details](docs/LINUX_RUNTIME.md).
+The TAR.GZ remains available for systems with native dependencies installed.
 
 ## Mobile development
 

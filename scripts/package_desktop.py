@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--version', required=True)
     parser.add_argument('--binaries', type=Path, default=Path('target/release'))
     parser.add_argument('--out', type=Path, default=Path('dist'))
+    parser.add_argument('--require-windows-signature', action='store_true')
     args = parser.parse_args()
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', args.version):
         parser.error('Invalid release version')
@@ -27,7 +28,14 @@ def main():
     suffix = '.exe' if args.platform == 'windows' else ''
     app_source = args.binaries / ('tv-manager-app' + suffix)
     server_source = args.binaries / ('tv-manager-server' + suffix)
+    if args.require_windows_signature and args.platform != 'windows':
+        parser.error('--require-windows-signature is only valid for Windows')
     if args.platform == 'windows':
+        if args.require_windows_signature:
+            subprocess.run(['pwsh', '-NoProfile', '-File', 'scripts/verify_windows_signatures.ps1', '-Binaries', str(args.binaries)], check=True)
+        (root / 'WINDOWS-SIGNING.txt').write_text(
+            'Both executables have verified, timestamped Authenticode signatures.\n' if args.require_windows_signature else
+            'Unsigned preview: these executables do not have publisher-verified Authenticode signatures.\n')
         binary = app_source.read_bytes()
         pe_offset = struct.unpack_from('<I', binary, 0x3c)[0]
         subsystem = struct.unpack_from('<H', binary, pe_offset + 92)[0]

@@ -14,7 +14,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, desktop, android, ios]
+        options: [all, desktop, windows, linux-runtime, android, ios]
 
 permissions:
   contents: read
@@ -59,9 +59,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: windows-latest
-            platform: windows
-            arch: x86_64
           - runner: ubuntu-24.04
             platform: linux
             arch: x86_64
@@ -111,6 +108,147 @@ jobs:
           shopt -s nullglob
           files=(dist/*.zip dist/*.tar.gz dist/*.sha256)
           gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+
+  windows:
+    needs: prepare
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'desktop' || inputs.platform == 'windows'
+    runs-on: windows-latest
+    environment: windows-release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Check out current packaging tools
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+      - run: cargo build --release -p tv-manager-app -p tv-manager-server --locked
+      - name: Validate signing configuration
+        if: vars.WINDOWS_SIGNING_ENABLED == 'true'
+        shell: pwsh
+        env:
+          SIGNING_ENDPOINT: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          SIGNING_ACCOUNT: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+          SIGNING_PROFILE: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          foreach ($taskName in @('SIGNING_ENDPOINT','SIGNING_ACCOUNT','SIGNING_PROFILE','AZURE_CLIENT_ID','AZURE_TENANT_ID','AZURE_SUBSCRIPTION_ID')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($taskName))) { throw "Signing configuration is missing $taskName" }
+          }
+      - name: Sign in to Azure using OIDC
+        if: vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign both Windows executables
+        if: vars.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\target\release\tv-manager-app.exe
+            ${{ github.workspace }}\target\release\tv-manager-server.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-azure-cli-credential: false
+          exclude-interactive-browser-credential: true
+      - name: Verify signatures and package
+        shell: pwsh
+        env:
+          SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED }}
+        run: |
+          Copy-Item .release-tools/scripts/package_desktop.py scripts/package_desktop.py -Force
+          Copy-Item .release-tools/scripts/verify_windows_signatures.ps1 scripts/verify_windows_signatures.ps1 -Force
+          $taskArguments = @('scripts/package_desktop.py','--platform','windows','--arch','x86_64','--version',$env:RELEASE_TAG.Substring(1))
+          if ($env:SIGNING_ENABLED -eq 'true') { $taskArguments += '--require-windows-signature' }
+          python @taskArguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows-x86_64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+      - name: Attach release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $taskAssets = @(Get-ChildItem dist -File | Where-Object { $_.Extension -in @('.zip','.sha256') } | ForEach-Object { $_.FullName })
+          gh release upload $env:RELEASE_TAG @taskAssets --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  linux-runtime:
+    needs: prepare
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'desktop' || inputs.platform == 'linux-runtime'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Check out current packaging tools
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build and runtime packaging dependencies
+        run: |
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
+          sudo apt-get install -y flatpak xvfb xdotool dbus-x11 libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak --user install --noninteractive --no-related flathub org.gnome.Platform//49 org.gnome.Sdk//49
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p tv-manager-app -p tv-manager-server --locked
+      - name: Package against managed GTK and WebKitGTK runtime
+        run: |
+          cp .release-tools/assets/branding/icons/linux-256.png assets/branding/icons/linux-256.png
+          python .release-tools/scripts/package_flatpak.py --version "${RELEASE_TAG#v}"
+          flatpak --user install --noninteractive dist/*.flatpak
+      - name: Verify app starts in the runtime
+        run: |
+          dbus-run-session -- xvfb-run -a bash .release-tools/scripts/smoke_flatpak.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-managed-runtime
+          path: |
+            dist/*.flatpak
+            dist/*runtime-sources.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+      - name: Attach release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" dist/*.flatpak dist/*runtime-sources.tar.gz dist/*.sha256 --clobber
 
   android:
     needs: prepare
