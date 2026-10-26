@@ -1,0 +1,76 @@
+[application]
+name = "Media Manager"
+default_platform = "desktop"
+android_main_activity = "android/MainActivity.kt"
+android_manifest = "android/AndroidManifest.xml"
+
+[android]
+min_sdk = 24
+compile_sdk = 35
+target_sdk = 35
+gradle_dependencies = [
+    "com.google.android.gms:play-services-ads:25.5.0",
+    "com.google.android.ump:user-messaging-platform:4.0.0",
+]
+
+[bundle]
+identifier = "com.tvshowmanager.app"
+publisher = "Media Manager"
+
+[ios]
+deployment_target = "15.0"
+
+[ios.plist]
+GADApplicationIdentifier = "ca-app-pub-9696662815161119~9310033241"
+SKAdNetworkItems = [
+    { SKAdNetworkIdentifier = "22mmun2rn5.skadnetwork" },
+    { SKAdNetworkIdentifier = "2fnua5tdw4.skadnetwork" },
+    { SKAdNetworkIdentifier = "2u9pt9hc89.skadnetwork" },
+    { SKAdNetworkIdentifier = "3qcr597p9d.skadnetwork" },
+    { SKAdNetworkIdentifier = "3qy4746246.skadnetwork" },
+    { SKAdNetworkIdentifier = "3rd42ekr43.skadnetwork" },
+    { SKAdNetworkIdentifier = "3sh42y64q3.skadnetwork" },
+    { SKAdNetworkIdentifier = "4468km3ulz.skadnetwork" },
+    { SKAdNetworkIdentifier = "44jx6755aq.skadnetwork" },
+    { SKAdNetworkIdentifier = "47vhws6wlr.skadnetwork" },
+    { SKAdNetworkIdentifier = "4dzt52r2t5.skadnetwork" },
+    { SKAdNetworkIdentifier = "4fzdc2evr5.skadnetwork" },
+    { SKAdNetworkIdentifier = "578prtvx9j.skadnetwork" },
+    { SKAdNetworkIdentifier = "7ug5zh24hu.skadnetwork" },
+    { SKAdNetworkIdentifier = "8c4e2ghe7u.skadnetwork" },
+    { SKAdNetworkIdentifier = "8s468mfl3y.skadnetwork" },
+    { SKAdNetworkIdentifier = "97r2b46745.skadnetwork" },
+    { SKAdNetworkIdentifier = "9t245vhmpl.skadnetwork" },
+    { SKAdNetworkIdentifier = "a2p9lx4jpn.skadnetwork" },
+    { SKAdNetworkIdentifier = "c3frkrj4fj.skadnetwork" },
+    { SKAdNetworkIdentifier = "c6k4g5qg8m.skadnetwork" },
+    { SKAdNetworkIdentifier = "cp8zw746q7.skadnetwork" },
+    { SKAdNetworkIdentifier = "cstr6suwn9.skadnetwork" },
+    { SKAdNetworkIdentifier = "e5fvkxwrpn.skadnetwork" },
+    { SKAdNetworkIdentifier = "f38h382jlk.skadnetwork" },
+    { SKAdNetworkIdentifier = "gta9lk7p23.skadnetwork" },
+    { SKAdNetworkIdentifier = "hs6bdukanm.skadnetwork" },
+    { SKAdNetworkIdentifier = "k674qkevps.skadnetwork" },
+    { SKAdNetworkIdentifier = "kbd757ywx3.skadnetwork" },
+    { SKAdNetworkIdentifier = "kbmxgpxpgc.skadnetwork" },
+    { SKAdNetworkIdentifier = "klf5c3l5u5.skadnetwork" },
+    { SKAdNetworkIdentifier = "ludvb6z3bs.skadnetwork" },
+    { SKAdNetworkIdentifier = "mlmmfzh3r3.skadnetwork" },
+    { SKAdNetworkIdentifier = "n38lu8286q.skadnetwork" },
+    { SKAdNetworkIdentifier = "p78axxw29g.skadnetwork" },
+    { SKAdNetworkIdentifier = "ppxm28t8ap.skadnetwork" },
+    { SKAdNetworkIdentifier = "s39g8k73mm.skadnetwork" },
+    { SKAdNetworkIdentifier = "su67r6k2v3.skadnetwork" },
+    { SKAdNetworkIdentifier = "t38b2kh725.skadnetwork" },
+    { SKAdNetworkIdentifier = "tl55sbb4fm.skadnetwork" },
+    { SKAdNetworkIdentifier = "uw77j35x4d.skadnetwork" },
+    { SKAdNetworkIdentifier = "v4nxqhlyqp.skadnetwork" },
+    { SKAdNetworkIdentifier = "v72qych5uu.skadnetwork" },
+    { SKAdNetworkIdentifier = "v9wttpbfk9.skadnetwork" },
+    { SKAdNetworkIdentifier = "vutu7akeur.skadnetwork" },
+    { SKAdNetworkIdentifier = "wg4vff78zm.skadnetwork" },
+    { SKAdNetworkIdentifier = "wzmmz9fp6w.skadnetwork" },
+    { SKAdNetworkIdentifier = "y5ghdn5j9k.skadnetwork" },
+    { SKAdNetworkIdentifier = "yclnxrl5pm.skadnetwork" },
+    { SKAdNetworkIdentifier = "ydx93a7ass.skadnetwork" },
+]

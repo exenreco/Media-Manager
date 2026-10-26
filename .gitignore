@@ -1,0 +1,53 @@
+# Local toolchain and build outputs
+.tools/
+/target/
+/dist/
+
+# Editor and operating-system files
+*.log
+*.pyc
+__pycache__/
+*.swp
+.DS_Store
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+
+# Native/mobile generated outputs and caches
+**/target/
+**/.build/
+**/.swiftpm/
+**/.gradle/
+**/build/
+**/DerivedData/
+**/Pods/
+**/local.properties
+*.apk
+*.aab
+*.ipa
+*.app/
+*.dSYM/
+
+# Local environment, credentials and signing material
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+.cargo/config.local.toml
+
+# Runtime settings and private library state
+workspace.bin
+workspace.json
+
+# Third-party reference art is retained locally, not redistributed
+/assets/branding/references/

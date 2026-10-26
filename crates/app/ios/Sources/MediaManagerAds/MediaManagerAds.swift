@@ -1,0 +1,233 @@
+import UIKit
+import WebKit
+import GoogleMobileAds
+import UserMessagingPlatform
+
+/// Only layout/privacy commands cross WebKit. Google's native view owns ad assets and clicks.
+@MainActor
+@objc(MediaManagerAds)
+public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLoaderDelegate {
+    private weak var controller: UIViewController?
+    private weak var browser: WKWebView?
+    private var loader: AdLoader?
+    private var ad: NativeAd?
+    private var adView: NativeAdView?
+    private var displayLink: CADisplayLink?
+    private var expiry: Timer?
+    private var geometry: [String: Any]?
+    private var started = false
+    private var disposed = false
+    private var loading = false
+    private static var sdkReady = false
+
+    public override init() { super.init() }
+
+    @objc public func attach(_ address: UInt64) {
+        guard let pointer = UnsafeRawPointer(bitPattern: UInt(address)) else { return }
+        let host = Unmanaged<UIViewController>.fromOpaque(pointer).takeUnretainedValue()
+        guard let web = findWebView(host.view) else { return }
+        controller = host
+        browser = web
+        disposed = false
+        web.configuration.userContentController.add(self, name: "MediaManagerAds")
+        displayLink = CADisplayLink(target: self, selector: #selector(positionAd))
+        displayLink?.add(to: .main, forMode: .common)
+        NotificationCenter.default.addObserver(self, selector: #selector(hide),
+            name: UIApplication.willResignActiveNotification, object: nil)
+    }
+
+    @objc public func detach() {
+        disposed = true
+        browser?.configuration.userContentController.removeScriptMessageHandler(forName: "MediaManagerAds")
+        displayLink?.invalidate(); displayLink = nil
+        NotificationCenter.default.removeObserver(self)
+        discardAd()
+        loader?.delegate = nil; loader = nil
+        browser = nil; controller = nil; geometry = nil
+    }
+
+    private func findWebView(_ view: UIView) -> WKWebView? {
+        if let web = view as? WKWebView { return web }
+        for child in view.subviews { if let web = findWebView(child) { return web } }
+        return nil
+    }
+
+    public func userContentController(_ userContentController: WKUserContentController,
+                                     didReceive message: WKScriptMessage) {
+        guard !disposed, message.frameInfo.isMainFrame,
+              let url = message.frameInfo.request.url,
+              url.scheme == "dioxus", url.host == "index.html",
+              let text = message.body as? String, let data = text.data(using: .utf8),
+              let command = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return }
+        switch command["type"] as? String {
+        case "bounds":
+            geometry = command
+            positionAd()
+            if !started && command["visible"] as? Bool == true {
+                started = true; requestConsent()
+            }
+        case "hide": geometry = nil; hide()
+        case "privacy": presentPrivacyOptions()
+        default: break
+        }
+    }
+
+    private func requestConsent() {
+        ConsentInformation.shared.requestConsentInfoUpdate(with: RequestParameters()) { [weak self] error in
+            guard let self, !self.disposed, let controller = self.controller else { return }
+            self.updatePrivacyButton()
+            guard error == nil else { self.collapse(); return }
+            ConsentForm.loadAndPresentIfRequired(from: controller) { [weak self] error in
+                guard let self, !self.disposed else { return }
+                self.updatePrivacyButton()
+                if error == nil && ConsentInformation.shared.canRequestAds { self.initializeAds() }
+                else { self.collapse() }
+            }
+        }
+    }
+
+    private func presentPrivacyOptions() {
+        guard ConsentInformation.shared.privacyOptionsRequirementStatus == .required,
+              let controller, !disposed else { return }
+        loader?.delegate = nil; loader = nil; loading = false
+        discardAd()
+        ConsentForm.presentPrivacyOptionsForm(from: controller) { [weak self] error in
+            guard let self, !self.disposed else { return }
+            self.updatePrivacyButton()
+            if error == nil && ConsentInformation.shared.canRequestAds { self.initializeAds() }
+            else { self.collapse() }
+        }
+    }
+
+    private func updatePrivacyButton() {
+        let required = ConsentInformation.shared.privacyOptionsRequirementStatus == .required
+        browser?.evaluateJavaScript("document.getElementById('ad-privacy')?.toggleAttribute('hidden', \(!required))")
+    }
+
+    private func initializeAds() {
+        guard !disposed, ConsentInformation.shared.canRequestAds else { return }
+        if Self.sdkReady { loadAd(); return }
+        MobileAds.shared.start { [weak self] _ in
+            Self.sdkReady = true
+            self?.loadAd()
+        }
+    }
+
+    private func loadAd() {
+        guard !disposed, !loading, let controller, ConsentInformation.shared.canRequestAds else { return }
+        loading = true
+        #if DEBUG
+        let unit = "ca-app-pub-3940256099942544/3986624511"
+        #else
+        let unit = "ca-app-pub-9696662815161119/9079018827"
+        #endif
+        let options = NativeAdViewAdOptions()
+        options.preferredAdChoicesPosition = .topRightCorner
+        loader = AdLoader(adUnitID: unit, rootViewController: controller, adTypes: [.native], options: [options])
+        loader?.delegate = self
+        loader?.load(Request())
+    }
+
+    public func adLoader(_ adLoader: AdLoader, didReceive nativeAd: NativeAd) {
+        guard adLoader === loader else { return }
+        loading = false
+        guard !disposed, let browser, browser.window != nil else { return }
+        discardAd()
+        ad = nativeAd
+        let view = makeView(nativeAd)
+        adView = view
+        browser.window?.addSubview(view)
+        browser.evaluateJavaScript("document.getElementById('native-ad-slot')?.removeAttribute('hidden')")
+        expiry = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.discardAd(); self?.collapse() }
+        }
+        positionAd()
+    }
+
+    public func adLoader(_ adLoader: AdLoader, didFailToReceiveAdWithError error: Error) {
+        guard adLoader === loader else { return }
+        loading = false; collapse()
+    }
+
+    private func makeView(_ ad: NativeAd) -> NativeAdView {
+        let view = NativeAdView(frame: .zero)
+        view.isHidden = true
+        view.backgroundColor = UIColor(red: 30/255, green: 43/255, blue: 59/255, alpha: 1)
+        let stack = UIStackView()
+        stack.axis = .vertical; stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12)
+        ])
+        func label(_ text: String?, height: CGFloat, lines: Int = 2) -> UILabel {
+            let label = UILabel(); label.text = text; label.textColor = .white
+            label.font = .systemFont(ofSize: 12); label.numberOfLines = lines
+            label.heightAnchor.constraint(equalToConstant: height).isActive = true
+            stack.addArrangedSubview(label)
+            return label
+        }
+        let badge = label("Advertisement", height: 24, lines: 1)
+        badge.isUserInteractionEnabled = false
+        let heading = UIStackView(); heading.axis = .horizontal; heading.spacing = 8
+        heading.heightAnchor.constraint(equalToConstant: 52).isActive = true
+        stack.addArrangedSubview(heading)
+        let icon = UIImageView(image: ad.icon?.image); icon.contentMode = .scaleAspectFit
+        icon.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        icon.isHidden = ad.icon == nil; heading.addArrangedSubview(icon)
+        let headline = UILabel(); headline.text = ad.headline; headline.textColor = .white
+        headline.font = .boldSystemFont(ofSize: 16); headline.numberOfLines = 2
+        heading.addArrangedSubview(headline)
+        let advertiser = label(ad.advertiser, height: 40); advertiser.isHidden = ad.advertiser == nil
+        let body = label(ad.body, height: 80, lines: 4); body.isHidden = ad.body == nil
+        let media = MediaView(); media.mediaContent = ad.mediaContent
+        media.heightAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        stack.addArrangedSubview(media)
+        let action = UIButton(type: .system); action.setTitle(ad.callToAction, for: .normal)
+        action.backgroundColor = UIColor(red: 157/255, green: 232/255, blue: 208/255, alpha: 1)
+        action.setTitleColor(.black, for: .normal)
+        action.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        action.isHidden = ad.callToAction == nil
+        action.isUserInteractionEnabled = false // The SDK, not this button, handles ad clicks.
+        stack.addArrangedSubview(action)
+        view.headlineView = headline; view.iconView = icon; view.advertiserView = advertiser
+        view.bodyView = body; view.mediaView = media; view.callToActionView = action
+        view.nativeAd = ad
+        return view
+    }
+
+    @objc private func positionAd() {
+        guard let view = adView else { return }
+        guard !disposed, UIApplication.shared.applicationState == .active,
+              controller?.presentedViewController == nil,
+              let browser, let window = browser.window, let geometry,
+              geometry["visible"] as? Bool == true,
+              let viewport = geometry["viewportWidth"] as? Double,
+              viewport.isFinite && viewport > 0 else { hide(); return }
+        let names = ["x", "y", "width", "height"]
+        let values = names.compactMap { geometry[$0] as? Double }
+        guard values.count == 4, values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 < 100_000 })
+        else { hide(); return }
+        let scale = browser.bounds.width / CGFloat(viewport)
+        let rect = CGRect(x: CGFloat(values[0]) * scale, y: CGFloat(values[1]) * scale,
+                          width: CGFloat(values[2]) * scale, height: CGFloat(values[3]) * scale)
+        guard rect.width >= 240, rect.height >= 440, browser.bounds.contains(rect)
+        else { hide(); return }
+        view.frame = browser.convert(rect, to: window)
+        view.isHidden = false
+    }
+
+    @objc private func hide() { adView?.isHidden = true }
+    private func collapse() {
+        hide()
+        browser?.evaluateJavaScript("document.getElementById('native-ad-slot')?.setAttribute('hidden', '')")
+    }
+    private func discardAd() {
+        expiry?.invalidate(); expiry = nil
+        adView?.removeFromSuperview(); adView?.nativeAd = nil; adView = nil; ad = nil
+    }
+}

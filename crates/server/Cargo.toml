@@ -1,0 +1,22 @@
+[package]
+name = "tv-manager-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tv-manager-core.workspace = true
+axum = "0.8"
+uuid = { version = "1", features = ["serde"] }
+constant_time_eq = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

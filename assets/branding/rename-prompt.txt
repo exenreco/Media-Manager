@@ -1,0 +1,4 @@
+Tool: built-in ImageGen
+Target: splash.png
+
+Edit only the application title in this transparent splash image. Replace the two-line text "TV Show" / "Manager" with exactly "Media" / "Manager", retaining the same font, size, weight, left alignment, placement and off-white color. Keep every other visual element unchanged: original icon, navy panel, folded ribbons, play portal, palette, tagline "YOUR LIBRARY. IN PERFECT ORDER.", progress rule, and "Preparing your workspace". Preserve the original canvas dimensions and genuine alpha transparency. No added text or new design elements.
