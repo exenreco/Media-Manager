@@ -3,7 +3,7 @@
 #![cfg_attr(test, allow(dead_code))]
 use anyhow::{bail, Context, Result};
 use dioxus::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 use tv_manager_core::{
@@ -16,6 +16,9 @@ use crate::ads::{attach_storage, detach_storage, MediaManagerStorage};
 
 #[component]
 pub fn Bridge() -> Element {
+    use_effect(|| {
+        let _ = document::eval("const viewport = document.querySelector('meta[name=viewport]'); if (viewport) viewport.content = 'width=device-width, initial-scale=1, viewport-fit=cover';");
+    });
     #[cfg(target_os = "ios")]
     let native = use_hook(|| {
         use dioxus::mobile::tao::platform::ios::WindowExtIOS;
@@ -53,7 +56,7 @@ pub async fn pick() -> Result<String> {
         .into())
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Entry {
     path: String,
     dir: bool,
@@ -67,6 +70,8 @@ struct Library {
     root: String,
     plan: String,
     entries: HashMap<String, Entry>,
+    state: PathBuf,
+    folder: String,
 }
 static LIBRARY: Mutex<Option<Library>> = Mutex::new(None);
 
@@ -133,6 +138,12 @@ pub async fn preview(root: &str, request: &PlanRequest) -> Result<RenamePlan> {
     )?;
     let plan = rename::preview(&mirror, request).await?;
     *LIBRARY.lock().unwrap() = Some(Library {
+        state: PathBuf::from(
+            response["state"]
+                .as_str()
+                .context("Native state directory unavailable")?,
+        ),
+        folder: request.folder.clone(),
         mirror,
         _directory: directory,
         root: root.into(),
@@ -154,6 +165,12 @@ pub async fn apply(mut plan: RenamePlan) -> Result<RenamePlan> {
     if library.plan != plan.id.to_string() {
         bail!("Preview expired; build a new preview");
     }
+    let mut journal = MobileRecord {
+        root: library.root.clone(),
+        folder: library.folder.clone(),
+        record: tv_manager_core::history::HistoryRecord::new(&plan),
+    };
+    save_mobile_record(&library.state, &journal)?;
     for task in &mut plan.tasks {
         if task.status != TaskStatus::Ready {
             continue;
@@ -168,10 +185,22 @@ pub async fn apply(mut plan: RenamePlan) -> Result<RenamePlan> {
             .entries
             .get(&path)
             .context("Source not found in document snapshot")?;
+        let before = native_entries(&library.root).await?;
+        let target_path = relative(&library.mirror, &task.target)?;
+        journal.record.steps.push(tv_manager_core::history::Step {
+            source: path.clone(),
+            target: target_path.clone(),
+            fingerprint: native_fingerprint(&before, &path)?,
+            applied: false,
+            undone: false,
+        });
+        save_mobile_record(&library.state, &journal)?;
         let result = command(json!({"op":"rename","root":library.root,"path":path,"name":target,"size":entry.size,"modified":entry.modified,"dir":entry.dir,"identity":entry.identity})).await;
         match result {
             Ok(_) => {
                 task.status = TaskStatus::Applied;
+                journal.record.steps.last_mut().unwrap().applied = true;
+                save_mobile_record(&library.state, &journal)?;
                 // Update only names in the mirror so poster paths follow season moves.
                 if let Err(error) = std::fs::rename(&task.source, &task.target) {
                     task.message =
@@ -198,6 +227,27 @@ pub async fn apply(mut plan: RenamePlan) -> Result<RenamePlan> {
             Err(error) => { poster.status=TaskStatus::Failed; poster.message=error.to_string(); }
         }
     }
+    let final_entries = native_entries(&library.root).await?;
+    for (index, step) in journal.record.steps.clone().iter().enumerate() {
+        if !step.applied {
+            continue;
+        }
+        let mut path = std::path::PathBuf::from(&step.target);
+        for later in journal
+            .record
+            .steps
+            .iter()
+            .skip(index + 1)
+            .filter(|s| s.applied)
+        {
+            if let Ok(suffix) = path.strip_prefix(&later.source) {
+                path = std::path::Path::new(&later.target).join(suffix);
+            }
+        }
+        journal.record.steps[index].fingerprint =
+            native_fingerprint(&final_entries, &path.to_string_lossy().replace('\\', "/"))?;
+    }
+    save_mobile_record(&library.state, &journal)?;
     // Retain the names-only cache for playback until the next preview.
     *LIBRARY.lock().unwrap() = Some(library);
     Ok(plan)
@@ -215,6 +265,195 @@ pub async fn play(plan: &RenamePlan, index: usize) -> Result<Option<String>> {
     };
     command(json!({"op":"play","root":root,"path":path})).await?;
     Ok(None)
+}
+
+pub async fn pick_image() -> Result<Vec<u8>> {
+    use base64::Engine;
+    let response = command(json!({"op":"pickImage"})).await?;
+    Ok(base64::engine::general_purpose::STANDARD
+        .decode(response["data"].as_str().context("Missing QR image")?)?)
+}
+#[derive(Serialize, Deserialize)]
+struct MobileRecord {
+    root: String,
+    folder: String,
+    record: tv_manager_core::history::HistoryRecord,
+}
+fn save_mobile_record(state: &std::path::Path, record: &MobileRecord) -> Result<()> {
+    use std::io::Write;
+    let directory = state.join("mobile-history");
+    std::fs::create_dir_all(&directory)?;
+    let mut file = tempfile::NamedTempFile::new_in(&directory)?;
+    file.write_all(&serde_json::to_vec_pretty(record)?)?;
+    file.as_file().sync_all()?;
+    file.persist(directory.join(format!("{}.json", record.record.id)))
+        .map_err(|e| e.error)?;
+    Ok(())
+}
+async fn native_entries(root: &str) -> Result<Vec<Entry>> {
+    let value = command(json!({"op":"list","root":root})).await?;
+    Ok(serde_json::from_value(value["entries"].clone())?)
+}
+fn native_fingerprint(
+    entries: &[Entry],
+    path: &str,
+) -> Result<Vec<tv_manager_core::history::Fingerprint>> {
+    let entry = entries
+        .iter()
+        .find(|e| e.path == path)
+        .context("Document is no longer available")?;
+    let prefix = format!("{path}/");
+    let mut result = vec![];
+    for entry in entries
+        .iter()
+        .filter(|e| e.path == path || (entry.dir && e.path.starts_with(&prefix)))
+    {
+        result.push(tv_manager_core::history::Fingerprint {
+            path: entry.path.strip_prefix(&prefix).unwrap_or("").into(),
+            directory: entry.dir,
+            size: if entry.dir { 0 } else { entry.size },
+            modified: if !entry.dir && entry.modified > 0 {
+                Some(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_millis(entry.modified as u64),
+                )
+            } else {
+                None
+            },
+        });
+    }
+    result.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(result)
+}
+pub async fn history(
+    root: &str,
+    folder: &str,
+) -> Result<Vec<tv_manager_core::history::HistoryRecord>> {
+    let response = command(json!({"op":"list","root":root})).await?;
+    let state = PathBuf::from(
+        response["state"]
+            .as_str()
+            .context("Native state directory unavailable")?,
+    );
+    let directory = state.join("mobile-history");
+    if !directory.exists() {
+        return Ok(vec![]);
+    }
+    let mut records = vec![];
+    for item in std::fs::read_dir(directory)? {
+        let path = item?.path();
+        if path.extension().is_none_or(|s| s != "json") {
+            continue;
+        }
+        let saved: MobileRecord = serde_json::from_slice(&std::fs::read(path)?)?;
+        if saved.root == root && saved.folder == folder {
+            records.push(saved.record);
+        }
+    }
+    records.sort_by_key(|r| std::cmp::Reverse(r.created));
+    records.truncate(100);
+    Ok(records)
+}
+pub async fn undo(
+    root: &str,
+    folder: &str,
+    id: uuid::Uuid,
+) -> Result<tv_manager_core::history::HistoryRecord> {
+    let response = command(json!({"op":"list","root":root})).await?;
+    let state = PathBuf::from(
+        response["state"]
+            .as_str()
+            .context("Native state directory unavailable")?,
+    );
+    let mut saved: MobileRecord = serde_json::from_slice(&std::fs::read(
+        state.join("mobile-history").join(format!("{id}.json")),
+    )?)?;
+    if saved.root != root || saved.folder != folder || saved.record.id != id {
+        bail!("History belongs to a different library");
+    }
+    for index in (0..saved.record.steps.len()).rev() {
+        let step = &saved.record.steps[index];
+        if step.undone {
+            continue;
+        }
+        let entries = native_entries(root).await?;
+        let original = entries.iter().find(|e| e.path == step.source);
+        let target = entries.iter().find(|e| e.path == step.target);
+        if !step.applied && original.is_some() {
+            saved.record.steps[index].undone = true;
+            save_mobile_record(&state, &saved)?;
+            continue;
+        }
+        if original.is_some() && target.is_none() {
+            if step.applied && native_fingerprint(&entries, &step.source)? != step.fingerprint {
+                bail!("Undo conflict: original path already exists");
+            }
+            saved.record.steps[index].undone = true;
+            save_mobile_record(&state, &saved)?;
+            continue;
+        }
+        if original.is_some() {
+            bail!("Undo conflict: original destination exists");
+        }
+        let entry = target.context("Renamed document is missing")?;
+        if native_fingerprint(&entries, &step.target)? != step.fingerprint {
+            bail!("Document changed since rename; Undo stopped");
+        }
+        let source_path = std::path::Path::new(&step.source);
+        let target_path = std::path::Path::new(&step.target);
+        if source_path.parent() != target_path.parent() {
+            bail!("Invalid history path");
+        }
+        let name = source_path
+            .file_name()
+            .context("Invalid original name")?
+            .to_string_lossy();
+        command(json!({"op":"rename","root":root,"path":step.target,"name":name,"size":entry.size,"modified":entry.modified,"dir":entry.dir,"identity":entry.identity})).await?;
+        saved.record.steps[index].undone = true;
+        save_mobile_record(&state, &saved)?;
+    }
+    *LIBRARY.lock().unwrap() = None;
+    Ok(saved.record)
+}
+pub async fn health(
+    root: &str,
+    plan: &RenamePlan,
+) -> Result<tv_manager_core::health::HealthReport> {
+    let mut report = tv_manager_core::health::scan(plan)?;
+    let entries = native_entries(root).await?;
+    let sizes = {
+        let guard = LIBRARY.lock().unwrap();
+        let library = guard.as_ref().context("Build a preview first")?;
+        if library.plan != plan.id.to_string() {
+            bail!("Preview expired");
+        }
+        let mut sizes = std::collections::BTreeMap::<u64, Vec<String>>::new();
+        for task in plan
+            .tasks
+            .iter()
+            .filter(|t| !t.directory && rename::is_video(&t.source))
+        {
+            let path = relative(&library.mirror, &task.source)?;
+            if let Some(entry) = entries
+                .iter()
+                .find(|e| e.path == path && !e.dir && e.size > 0)
+            {
+                sizes.entry(entry.size).or_default().push(path);
+            }
+        }
+        sizes
+    };
+    for paths in sizes.values().filter(|v| v.len() > 1) {
+        let mut hashes = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for path in paths {
+            let result = command(json!({"op":"hash","root":root,"path":path})).await?;
+            let hash = result["sha256"].as_str().context("Missing content hash")?;
+            hashes.entry(hash.into()).or_default().push(path.clone());
+        }
+        report
+            .duplicates
+            .extend(hashes.into_values().filter(|v| v.len() > 1));
+    }
+    Ok(report)
 }
 
 #[cfg(test)]

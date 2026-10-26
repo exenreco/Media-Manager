@@ -6,8 +6,8 @@ Configured IDs:
 - Release native unit: `ca-app-pub-9696662815161119/9079018827`
 - Debug unit: `ca-app-pub-3940256099942544/3986624511` (Google test ads)
 
-The Rust settings panel shows the same 440-point reserved ad area above Build
-rename preview on Android and iOS, separated from the button by 24 CSS pixels.
+The Rust settings panel places the native ad area directly below the TV Shows/Movies
+toggle on Android and iOS, with 24 CSS pixels before Connect your library.
 On iOS, `manganis::ffi` registers the `MediaManagerAds` Swift package with
 Dioxus CLI 0.7.10. The plugin attaches a main-frame-only WebKit message handler
 to the app's existing WKWebView. It accepts geometry/privacy commands only
@@ -106,3 +106,7 @@ compact layouts. Loading eligibility is separate from full overlay visibility.
 The bridge waits briefly for WKWebView readiness; errors show a status/code and
 a manual Retry ad button. UMP must authorize every request, including retries.
 SDK load failures are logged under MediaManagerAds.
+
+A second mobile ad placement appears below the poster panel, above its navigation.
+One native SDK ad view follows the visible placement; the two placeholders do not
+duplicate the same ad view or create extra requests when switching panels.

@@ -12,6 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
 regex = "1"
+sha2 = "0.10"
 scraper = "0.24"
 natord = "1"
 walkdir = "2"

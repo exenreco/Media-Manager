@@ -24,8 +24,8 @@ Set `MEDIA_MANAGER_ANDROID_ICONS` to the absolute path of
 `assets/branding/icons/android` before building. The same Gradle init script
 registers these launcher resources; release CI sets the path automatically.
 
-The Rust settings panel reserves an Android-only native ad slot above Build
-rename preview, with 24 CSS pixels between the ad and that action. An
+The Rust settings panel places the mobile native ad slot directly below the
+TV Shows/Movies toggle, with 24 CSS pixels before Connect your library. An
 origin-restricted AndroidX WebKit message listener accepts geometry and
 privacy commands only from the app's main `https://dioxus.index.html` frame.
 Google assets are rendered in Android `NativeAdView`, not HTML. The SDK owns
@@ -100,3 +100,7 @@ load before they fit completely, but the native overlay stays hidden until the
 whole slot is visible. Compact layouts omit optional body/advertiser views and
 retain attribution, headline, media, CTA and AdChoices. Bridge readiness is
 retried briefly at mount. SDK failures are logged under MediaManagerAds.
+
+A second mobile ad placement appears below the poster panel, above its navigation.
+One native SDK ad view follows the visible placement; the two placeholders do not
+duplicate the same ad view or create extra requests when switching panels.

@@ -58,5 +58,28 @@ class FrameworkSlices(unittest.TestCase):
         binary.write_bytes(b'resigned framework')
 
 
+class PlatformMetadata(unittest.TestCase):
+    def test_simulator_metadata_does_not_claim_to_be_a_phone_bundle(self):
+        original = {'CFBundleSupportedPlatforms': ['iPhoneOS', 'iPadOS']}
+        info = packaging.platform_info(original, 'iphonesimulator', '26.0')
+        self.assertEqual(info['CFBundleSupportedPlatforms'], ['iPhoneSimulator'])
+        self.assertEqual(info['DTSDKName'], 'iphonesimulator26.0')
+        self.assertEqual(original['CFBundleSupportedPlatforms'], ['iPhoneOS', 'iPadOS'])
+
+    def test_device_metadata_uses_iphoneos(self):
+        info = packaging.platform_info({}, 'iphoneos', '26.0')
+        self.assertEqual(info['CFBundleSupportedPlatforms'], ['iPhoneOS'])
+        self.assertEqual(info['UIDeviceFamily'], [1, 2])
+
+    def test_arm64_does_not_make_a_device_binary_simulator_compatible(self):
+        packaging.validate_platform(' platform 7\n', 'iphonesimulator')
+        packaging.validate_platform(' platform IOSSIMULATOR\n', 'iphonesimulator')
+        packaging.validate_platform(' platform IOS\n', 'iphoneos')
+        with self.assertRaises(ValueError):
+            packaging.validate_platform(' platform 2\n', 'iphonesimulator')
+        with self.assertRaises(ValueError):
+            packaging.validate_platform(' platform 7\n', 'iphoneos')
+
+
 if __name__ == '__main__':
     unittest.main()

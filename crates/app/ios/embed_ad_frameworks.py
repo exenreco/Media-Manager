@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import stat
 import subprocess
@@ -41,6 +42,24 @@ def make_writable(root):
         if item.is_dir():
             mode |= stat.S_IXUSR
         item.chmod(mode)
+
+
+def platform_info(info, sdk, version):
+    if sdk not in ('iphoneos', 'iphonesimulator'):
+        raise ValueError('Unsupported iOS SDK')
+    result = dict(info)
+    result['CFBundleSupportedPlatforms'] = ['iPhoneSimulator' if sdk == 'iphonesimulator' else 'iPhoneOS']
+    result['DTPlatformName'] = sdk
+    result['DTPlatformVersion'] = version
+    result['DTSDKName'] = sdk + version
+    result.setdefault('UIDeviceFamily', [1, 2])
+    return result
+
+
+def validate_platform(commands, sdk):
+    expected = r'(?:IOSSIMULATOR|7)' if sdk == 'iphonesimulator' else r'(?:IOS|2)'
+    if not re.search(r'(?m)^\s*platform\s+' + expected + r'\s*$', commands):
+        raise ValueError('Executable platform does not match the requested iOS SDK')
 
 
 def main():
@@ -84,6 +103,12 @@ def main():
         info = plistlib.load(source)
     with Path(__file__).with_name('Info.plist').open('rb') as source:
         info.update(plistlib.load(source))
+    executable = (app / info['CFBundleExecutable']).resolve(strict=True)
+    if not executable.is_relative_to(app):
+        parser.error('App executable must remain inside the bundle')
+    validate_platform(run('xcrun', 'otool', '-l', str(executable)), args.sdk)
+    version = run('xcrun', '--sdk', args.sdk, '--show-sdk-version').strip()
+    info = platform_info(info, args.sdk, version)
     with (app / 'Info.plist').open('wb') as target:
         plistlib.dump(info, target)
     run(sys.executable, str(Path(__file__).resolve().parents[3] / 'scripts/install_ios_icon.py'),

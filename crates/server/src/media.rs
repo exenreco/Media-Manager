@@ -151,7 +151,10 @@ pub async fn stream(
         .to_ascii_lowercase()
         .as_str()
     {
-        "mp4" => "video/mp4",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "ts" | "m2ts" => "video/mp2t",
         "mkv" => "video/x-matroska",
         _ => "video/x-msvideo",
     };

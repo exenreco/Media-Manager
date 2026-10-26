@@ -41,7 +41,7 @@ pub fn season_in_name(name: &str) -> Option<u32> {
 }
 
 pub fn episode_name(request: &PlanRequest, show: &Show, episode: &Episode) -> Result<String> {
-    let series = if request.plex {
+    let series = if request.plex || request.jellyfin {
         show.year.map_or_else(
             || show.name.clone(),
             |year| format!("{} ({year})", show.name),
@@ -70,7 +70,9 @@ pub fn episode_name(request: &PlanRequest, show: &Show, episode: &Episode) -> Re
         episode.number,
         sanitize(&episode.name)
     );
-    Ok(if request.plex {
+    Ok(if request.jellyfin {
+        format!("{} {name}", sanitize(&series))
+    } else if request.plex {
         format!("{} - {name}", sanitize(&series))
     } else {
         name
@@ -102,9 +104,28 @@ pub fn scoped_folder(root: &Path, relative: &str) -> Result<PathBuf> {
     Ok(folder)
 }
 
+pub fn is_video(path: &Path) -> bool {
+    path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+        ["mp4", "mkv", "avi", "mov", "m4v", "webm", "ts", "m2ts"]
+            .contains(&s.to_ascii_lowercase().as_str())
+    })
+}
+pub fn is_companion(path: &Path) -> bool {
+    path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+        [
+            "srt", "ass", "ssa", "vtt", "sub", "idx", "mka", "aac", "flac", "nfo",
+        ]
+        .contains(&s.to_ascii_lowercase().as_str())
+    })
+}
+
 pub fn media_files(folder: &Path) -> Result<Vec<PathBuf>> {
     let mut files = vec![];
-    for entry in WalkDir::new(folder).follow_links(false) {
+    for entry in WalkDir::new(folder)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".media-manager")
+    {
         let entry = entry.context("Could not read part of the media folder")?;
         if entry.file_type().is_file() {
             let extension = entry
@@ -113,7 +134,7 @@ pub fn media_files(folder: &Path) -> Result<Vec<PathBuf>> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if ["mp4", "mkv", "avi", "txt"].contains(&extension.as_str()) {
+            if is_video(entry.path()) || extension == "txt" {
                 files.push(entry.into_path());
             }
         }
@@ -170,7 +191,7 @@ pub async fn preview(root: &Path, request: &PlanRequest) -> Result<RenamePlan> {
     let folder = scoped_folder(root, &request.folder)?;
     let files = media_files(&folder)?;
     if files.is_empty() {
-        bail!("No supported files found (.mp4, .mkv, .avi, .txt)");
+        bail!("No supported video or .txt files found");
     }
     let show = metadata::lookup(request, files.len()).await?;
     build_plan(&folder, request, show, &files)
@@ -214,7 +235,7 @@ pub fn build_plan(
             modified: fs::metadata(file)?.modified().ok(),
         };
         let base = if request.movie {
-            if request.plex {
+            if request.plex || request.jellyfin {
                 show.year.map_or_else(
                     || sanitize(&show.name),
                     |y| format!("{} ({y})", sanitize(&show.name)),
@@ -232,13 +253,38 @@ pub fn build_plan(
                     .next()
                     .or_else(|| folder.file_name()?.to_str().and_then(season_in_name))
             });
-            let episode = season.and_then(|s| {
-                let index = counters.entry(s).or_default();
-                let episode = by_season.get(&s).and_then(|v| v.get(*index)).copied();
-                *index += 1;
-                episode
-            });
-            task.season = season;
+            let mapped = explicit_episode(folder, file, &request.options.episode_map)?;
+            let detected = detected_episode(file);
+            let episode = if let Some((s, n)) = mapped.or_else(|| {
+                if request.options.numbering != crate::Numbering::Sequence {
+                    detected
+                } else {
+                    None
+                }
+            }) {
+                show.episodes
+                    .iter()
+                    .find(|e| e.season == s && e.number == n)
+            } else if request.options.numbering == crate::Numbering::Absolute {
+                absolute_number(file)
+                    .and_then(|number| number.checked_sub(request.options.absolute_start.max(1)))
+                    .and_then(|index| {
+                        show.episodes
+                            .iter()
+                            .filter(|e| e.season != 0)
+                            .nth(index as usize)
+                    })
+            } else if request.options.numbering == crate::Numbering::Detected {
+                None
+            } else {
+                season.and_then(|s| {
+                    let index = counters.entry(s).or_default();
+                    let episode = by_season.get(&s).and_then(|v| v.get(*index)).copied();
+                    *index += 1;
+                    episode
+                })
+            };
+            task.season = episode.map(|e| e.season).or(season);
             let Some(episode) = episode else {
                 task.status = TaskStatus::Skipped;
                 task.message = "No matching episode or season folder".into();
@@ -262,7 +308,10 @@ pub fn build_plan(
         }
         tasks.push(task);
     }
-    if request.plex && !request.movie {
+    if request.options.companions {
+        append_companions(&mut tasks)?;
+    }
+    if (request.plex || request.jellyfin) && !request.movie {
         let mut folders = WalkDir::new(folder)
             .min_depth(1)
             .follow_links(false)
@@ -336,6 +385,109 @@ pub fn build_plan(
     })
 }
 
+fn detected_episode(path: &Path) -> Option<(u32, u32)> {
+    let name = path.file_stem()?.to_str()?;
+    let pattern = Regex::new(r"(?i)(?:^|[^a-z0-9])s(\d{1,4})[ ._-]*e(\d{1,4})(?:[^0-9]|$)").ok()?;
+    let captures = pattern.captures(name)?;
+    Some((captures[1].parse().ok()?, captures[2].parse().ok()?))
+}
+fn absolute_number(path: &Path) -> Option<u32> {
+    let name = path.file_stem()?.to_str()?;
+    let without_tags = Regex::new(r"\[[^\]]*\]")
+        .ok()?
+        .replace_all(name, "")
+        .into_owned();
+    let pattern = Regex::new(r"(?i)(?:^| - |\bep?)[ ._-]*(\d{1,5})(?:v\d)?(?:$|[ ._-])").ok()?;
+    let captures = pattern.captures(without_tags.trim())?;
+    captures[1].parse().ok()
+}
+fn explicit_episode(root: &Path, path: &Path, mapping: &str) -> Result<Option<(u32, u32)>> {
+    let relative = path
+        .strip_prefix(root)?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let mut selected = None;
+    for line in mapping.lines().filter(|line| !line.trim().is_empty()) {
+        let cells: Vec<_> = line.split('|').map(str::trim).collect();
+        if cells.len() != 3 {
+            bail!("Episode mapping must use path|season|episode on each line");
+        }
+        let season = cells[1].parse::<u32>().context("Invalid mapping season")?;
+        let number = cells[2].parse::<u32>().context("Invalid mapping episode")?;
+        if cells[0].replace('\\', "/") == relative {
+            if selected.is_some() {
+                bail!("Duplicate episode mapping for {relative}");
+            }
+            selected = Some((season, number));
+        }
+    }
+    Ok(selected)
+}
+fn append_companions(tasks: &mut Vec<RenameTask>) -> Result<()> {
+    let videos: Vec<_> = tasks
+        .iter()
+        .filter(|t| !t.directory && is_video(&t.source))
+        .cloned()
+        .collect();
+    let mut seen = HashSet::new();
+    for video in &videos {
+        if video.status == TaskStatus::Skipped {
+            continue;
+        }
+        let old = video.source.file_stem().unwrap().to_string_lossy();
+        let new = video.target.file_stem().unwrap().to_string_lossy();
+        for entry in fs::read_dir(video.source.parent().unwrap())? {
+            let path = entry?.path();
+            if !is_companion(&path) || fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                continue;
+            }
+            let filename = path.file_name().unwrap().to_string_lossy();
+            let Some(suffix) = filename
+                .strip_prefix(old.as_ref())
+                .filter(|s| s.starts_with('.'))
+            else {
+                continue;
+            };
+            // Prefer the longest matching video stem, e.g. Pilot.extended.en.srt.
+            if videos.iter().any(|other| {
+                other.source.parent() == video.source.parent()
+                    && other.source.file_stem().is_some_and(|stem| {
+                        let stem = stem.to_string_lossy();
+                        stem.len() > old.len()
+                            && filename
+                                .strip_prefix(stem.as_ref())
+                                .is_some_and(|rest| rest.starts_with('.'))
+                    })
+            }) {
+                continue;
+            }
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            let target = path.with_file_name(format!("{new}{suffix}"));
+            let metadata = fs::metadata(&path)?;
+            let status = if path == target {
+                TaskStatus::Unchanged
+            } else if target.exists() {
+                TaskStatus::Conflict
+            } else {
+                TaskStatus::Ready
+            };
+            tasks.push(RenameTask {
+                source: path,
+                target,
+                status,
+                message: "Companion file".into(),
+                directory: false,
+                season: video.season,
+                length: metadata.len(),
+                modified: metadata.modified().ok(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn check_source(root: &Path, task: &RenameTask) -> Result<()> {
     let relative = task
         .source
@@ -402,9 +554,30 @@ pub fn edit_target(plan: &mut RenamePlan, index: usize, filename: &str) -> Resul
     if !extension.eq_ignore_ascii_case(original) {
         bail!("Keep the original .{original} file extension");
     }
+    let original_source = task.source.clone();
+    let previous_target = task.target.clone();
     task.target = task.source.with_file_name(filename);
     task.status = TaskStatus::Ready;
     task.message.clear();
+    if is_video(&original_source) {
+        let old = previous_target.file_stem().unwrap().to_string_lossy();
+        let new = Path::new(filename).file_stem().unwrap().to_string_lossy();
+        for companion in plan
+            .tasks
+            .iter_mut()
+            .filter(|t| is_companion(&t.source) && t.source.parent() == original_source.parent())
+        {
+            if let Some(suffix) = companion
+                .target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|name| name.strip_prefix(old.as_ref()))
+                .filter(|s| s.starts_with('.'))
+            {
+                companion.target = companion.target.with_file_name(format!("{new}{suffix}"));
+            }
+        }
+    }
     let mut counts = BTreeMap::<String, usize>::new();
     for task in &plan.tasks {
         if task.status != TaskStatus::Skipped {
@@ -444,13 +617,7 @@ pub fn playback_path(plan: &RenamePlan, index: usize) -> Result<PathBuf> {
         .tasks
         .get(index)
         .context("File is not in this preview")?;
-    let extension = task
-        .source
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if task.directory || !["mp4", "mkv", "avi"].contains(&extension.as_str()) {
+    if task.directory || !is_video(&task.source) {
         bail!("Playback is only available for video files");
     }
     let mut path = if task.status == TaskStatus::Applied {
@@ -493,6 +660,14 @@ pub fn apply(plan: &mut RenamePlan) -> Result<()> {
     for task in plan.tasks.iter().filter(|t| t.status == TaskStatus::Ready) {
         check_source(&plan.root, task)?;
     }
+    let mut journal = crate::history::HistoryRecord::new(plan);
+    if plan
+        .tasks
+        .iter()
+        .any(|task| task.status == TaskStatus::Ready)
+    {
+        crate::history::store(&plan.root, &journal)?;
+    }
     for task in plan
         .tasks
         .iter_mut()
@@ -500,12 +675,22 @@ pub fn apply(plan: &mut RenamePlan) -> Result<()> {
     {
         let result = (|| -> Result<()> {
             check_source(&plan.root, task)?;
+            journal
+                .steps
+                .push(crate::history::prepare(&plan.root, task)?);
+            crate::history::store(&plan.root, &journal)?;
             crate::move_file::no_replace(&task.source, &task.target)
                 .context("Could not rename without replacing an existing destination")?;
             Ok(())
         })();
         match result {
-            Ok(()) => task.status = TaskStatus::Applied,
+            Ok(()) => {
+                task.status = TaskStatus::Applied;
+                if let Some(step) = journal.steps.last_mut() {
+                    step.applied = true;
+                }
+                crate::history::store(&plan.root, &journal)?;
+            }
             Err(error) => {
                 task.status = TaskStatus::Failed;
                 task.message = format!("{error:#}");

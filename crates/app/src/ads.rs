@@ -12,7 +12,7 @@ extern "Swift" {
 }
 
 #[component]
-pub fn NativeAdSlot() -> Element {
+fn NativeAdBridge() -> Element {
     #[cfg(target_os = "ios")]
     let native = use_hook(|| {
         use dioxus::mobile::tao::platform::ios::WindowExtIOS;
@@ -37,12 +37,19 @@ pub fn NativeAdSlot() -> Element {
             let _ = detach(plugin);
         }
     });
+    rsx! {}
+}
+
+#[component]
+pub fn NativeAdSlot(#[props(default = false)] posters: bool) -> Element {
+    let suffix = if posters { "posters" } else { "library" };
     rsx! {
+        if !posters { NativeAdBridge {} }
         div { style: "margin-bottom:24px",
-            div { id: "native-ad-slot", style: "height:440px;min-width:240px;position:relative", "aria-label": "Advertisement" }
-            p { id: "native-ad-status", class: "hint", role: "status", "Advertisement loads when this section is visible." }
-            button { id: "ad-retry", r#type: "button", class: "secondary", hidden: true, "Retry ad" }
-            button { id: "ad-privacy", r#type: "button", class: "secondary", hidden: true, "Ad privacy options" }
+            div { id: "native-ad-slot-{suffix}", class: "native-ad-slot", style: "height:440px;min-width:240px;position:relative", "aria-label": "Advertisement" }
+            p { class: "hint native-ad-status", role: "status", "Advertisement loads when this section is visible." }
+            button { r#type: "button", class: "secondary ad-retry", hidden: true, "Retry ad" }
+            button { r#type: "button", class: "secondary ad-privacy", hidden: true, "Ad privacy options" }
         }
     }
 }
