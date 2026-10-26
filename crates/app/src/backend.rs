@@ -11,6 +11,7 @@ pub struct Connection {
     pub root: String,
     pub url: String,
     pub token: String,
+    pub certificate: String,
 }
 
 impl Default for Connection {
@@ -20,6 +21,7 @@ impl Default for Connection {
             root: String::new(),
             url: "http://127.0.0.1:8787".into(),
             token: String::new(),
+            certificate: String::new(),
         }
     }
 }
@@ -44,7 +46,17 @@ impl Connection {
         if self.token.trim().is_empty() {
             bail!("Enter the server bearer token");
         }
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder();
+        if !self.certificate.is_empty() {
+            use base64::Engine;
+            let der = base64::engine::general_purpose::STANDARD
+                .decode(&self.certificate)
+                .context("Invalid desktop pairing certificate")?;
+            builder = builder
+                .tls_built_in_root_certs(false)
+                .add_root_certificate(reqwest::Certificate::from_der(&der)?);
+        }
+        let client = builder
             .timeout(Duration::from_secs(180))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
@@ -221,6 +233,7 @@ impl Connection {
         )
         .await
     }
+    #[cfg(any(not(any(target_os = "android", target_os = "ios")), test))]
     pub async fn pairing_code(&self) -> Result<String> {
         let (client, url) = self.client()?;
         let value: serde_json::Value = decode(
@@ -236,11 +249,14 @@ impl Connection {
             .context("Missing pairing code")?
             .into())
     }
-    pub async fn redeem_pairing(url: String, code: String) -> Result<Self> {
+    #[cfg(any(target_os = "android", target_os = "ios", test))]
+    pub async fn redeem_pairing(invitation: crate::pairing::Invitation) -> Result<Self> {
+        let code = invitation.code;
         // Reuse URL validation without ever transmitting the placeholder credential.
         let connection = Self {
             remote: true,
-            url,
+            url: invitation.url,
+            certificate: invitation.certificate,
             token: "pairing-validation".into(),
             ..Default::default()
         };
@@ -353,4 +369,65 @@ async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> 
         );
     }
     response.json().await.context("Unexpected server response")
+}
+
+#[cfg(test)]
+mod local_pairing_tests {
+    use super::*;
+    use base64::Engine;
+    #[tokio::test]
+    async fn desktop_tls_pairing_requires_qr_certificate_and_is_single_use() {
+        let folder = tempfile::tempdir().unwrap();
+        let host =
+            tv_manager_server::host_library(folder.path().into(), "127.0.0.1".parse().unwrap())
+                .await
+                .unwrap();
+        let owner = Connection {
+            remote: true,
+            url: host.url.clone(),
+            token: host.token.clone(),
+            certificate: base64::engine::general_purpose::STANDARD.encode(&host.certificate),
+            ..Connection::default()
+        };
+        let code = owner.pairing_code().await.unwrap();
+        let invite = crate::pairing::Invitation {
+            version: 2,
+            url: owner.url.clone(),
+            code,
+            certificate: owner.certificate.clone(),
+            desktop: "Test desktop".into(),
+            mode: "local".into(),
+        };
+        let encoded = serde_json::to_string(&invite).unwrap();
+        let parsed = crate::pairing::Invitation::parse(&encoded).unwrap();
+        let paired = Connection::redeem_pairing(parsed.clone()).await.unwrap();
+        assert_eq!(paired.token, owner.token);
+        let (client, url) = paired.client().unwrap();
+        assert!(client
+            .get(url.join("/v1/health").unwrap())
+            .bearer_auth(&paired.token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        assert!(Connection::redeem_pairing(parsed).await.is_err());
+        let untrusted = Connection {
+            certificate: String::new(),
+            ..owner.clone()
+        };
+        assert!(untrusted.pairing_code().await.is_err());
+        let other =
+            tv_manager_server::host_library(folder.path().into(), "127.0.0.1".parse().unwrap())
+                .await
+                .unwrap();
+        let wrong = Connection {
+            certificate: base64::engine::general_purpose::STANDARD.encode(&other.certificate),
+            ..owner.clone()
+        };
+        assert!(wrong.pairing_code().await.is_err());
+        drop(host);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(paired.pairing_code().await.is_err());
+    }
 }

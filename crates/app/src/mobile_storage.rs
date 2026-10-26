@@ -267,11 +267,13 @@ pub async fn play(plan: &RenamePlan, index: usize) -> Result<Option<String>> {
     Ok(None)
 }
 
-pub async fn pick_image() -> Result<Vec<u8>> {
-    use base64::Engine;
-    let response = command(json!({"op":"pickImage"})).await?;
-    Ok(base64::engine::general_purpose::STANDARD
-        .decode(response["data"].as_str().context("Missing QR image")?)?)
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn scan_pairing() -> Result<String> {
+    let response = command(json!({"op":"scanPairing"})).await?;
+    Ok(response["text"]
+        .as_str()
+        .context("Scanner returned no pairing invitation")?
+        .to_string())
 }
 #[derive(Serialize, Deserialize)]
 struct MobileRecord {

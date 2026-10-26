@@ -3,6 +3,7 @@ import WebKit
 import UniformTypeIdentifiers
 import QuickLook
 import CryptoKit
+import AVFoundation
 
 /// Security-scoped folder access; no access outside folders chosen in Files.
 @MainActor
@@ -43,6 +44,23 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
               url.scheme == "dioxus", url.host == "index.html",
               let text = message.body as? String, let bytes = text.data(using: .utf8),
               let command = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else { return }
+        if command["op"] as? String == "scanPairing" {
+            guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before scanning"]); return }
+            pending = command
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                Task { @MainActor in
+                    guard let self, self.pending != nil else { return }
+                    guard granted else { self.pending = nil; self.reply(command, ["error": "Camera permission denied. Enable Camera access in Settings to scan."]); return }
+                    let scanner = PairingCameraController { [weak self] result in
+                        guard let self else { return }; self.pending = nil
+                        switch result { case .success(let text): self.reply(command, ["text": text]); case .failure(let error): self.reply(command, ["error": error.localizedDescription]) }
+                    }
+                    scanner.modalPresentationStyle = .fullScreen
+                    controller.present(scanner, animated: true)
+                }
+            }
+            return
+        }
         if command["op"] as? String == "pick" || command["op"] as? String == "pickImage" {
             guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before choosing a folder"]); return }
             pending = command

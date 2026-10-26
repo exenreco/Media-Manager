@@ -84,19 +84,33 @@ They persist in the app settings directory as `naming-profiles.json`.
 
 ## QR device pairing
 
-Run/configure the Media Manager server with its normal media root and bearer token,
-and expose it through HTTPS. On an already connected device, open **Pair another
-device** and generate a QR code. On the phone, import the QR image from the system
-image picker (or paste its JSON invitation), review the HTTPS server address, and
-confirm. This is QR-image import, not a live camera scanner. It avoids manually
-entering the server URL and bearer token.
+On desktop, **Pair a mobile device** offers **Local network** or **Remote HTTPS server**.
+Local mode uses the selected media root and detected LAN IP (editable for multi-adapter
+PCs). **Generate pairing QR** starts an encrypted library server bound to that IP on
+an available port. Keep the desktop app open and phone on the same reachable network.
+Allow that app through the private-network firewall if needed; no firewall rules are
+changed automatically. This mode needs no public domain, certificate installation,
+Cloudflare tunnel, or separately launched backend.
 
-Codes expire after five minutes, can be redeemed once, and are invalidated when the
-server restarts. The QR contains a short-lived exchange code rather than the bearer
-token. Pairing grants the server's existing library permissions; rotating the server
-bearer token revokes paired clients. It does not create accounts, start a server,
-configure TLS, or open firewall ports. Mobile storage permissions remain limited to
-folders chosen through native pickers.
+The QR carries its version, desktop name, HTTPS endpoint, connection mode, one-use
+five-minute code, and (for local mode) the desktop's public certificate. Private keys,
+long-lived bearer tokens, and media paths are not in the QR. The phone trusts that
+certificate only for its paired connection; system trust stores are unchanged.
+The QR disappears when its countdown expires. Generate a fresh code for another phone.
+**Stop local sharing**, closing the desktop app, or generating for a different library/IP
+stops the previous host. Paired phones lose access and need a fresh QR after restart.
+
+Remote mode uses the HTTPS URL and credentials configured under **Connect your library**.
+The remote server must already be running and reachable from the phone.
+
+On Android/iOS, press **Scan desktop QR code**, grant camera access, and align the QR
+inside the camera guide. Scanning a valid invitation automatically redeems its code
+and connects the phone. The old image-import, JSON-paste, and confirmation controls
+are replaced. Camera frames remain on the device. Cancel or a permission failure
+returns to the app; an invalid, expired, already-used, or unreachable invitation
+reports an error and requires another scan. Scanning authorizes that desktop/server's
+library permissions. Camera scans and local-network access still require device testing.
+
 
 ## Validation and next release
 

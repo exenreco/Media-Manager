@@ -337,6 +337,19 @@ private class LocalStorage(private val activity: MainActivity) {
         activity.runOnUiThread { web.evaluateJavascript(script, null) }
     }
     fun handle(command: JSONObject, web: WebView) {
+        if (command.optString("op") == "scanPairing") {
+            if (pending != null) { reply(web, command, JSONObject().put("error", "Close the current scanner or picker first")); return }
+            pending = Pair(command, web)
+            try {
+                com.google.zxing.integration.android.IntentIntegrator(activity)
+                    .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+                    .setPrompt("Align the desktop Media Manager QR code inside the guide")
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(false)
+                    .initiateScan()
+            } catch (error: Exception) { pending = null; reply(web, command, JSONObject().put("error", error.message ?: "Camera unavailable")) }
+            return
+        }
         if (command.optString("op") == "pick" || command.optString("op") == "pickImage") {
             if (pending != null) { reply(web,command,JSONObject().put("error","A folder picker is already open")); return }
             pending = Pair(command, web)
@@ -357,6 +370,17 @@ private class LocalStorage(private val activity: MainActivity) {
         }
     }
     fun result(code: Int, result: Int, data: android.content.Intent?) {
+        if (code == com.google.zxing.integration.android.IntentIntegrator.REQUEST_CODE) {
+            val current = pending ?: return
+            if (current.first.optString("op") != "scanPairing") return
+            pending = null
+            val scanned = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(code, result, data)
+            val text = scanned?.contents
+            if (text == null) reply(current.second, current.first, JSONObject().put("error", "Scan cancelled or camera permission denied"))
+            else if (text.length > 8192) reply(current.second, current.first, JSONObject().put("error", "Pairing QR is too large"))
+            else reply(current.second, current.first, JSONObject().put("text", text))
+            return
+        }
         if (code != requestCode) return
         val (command,web)=pending ?: return; pending=null
         try {

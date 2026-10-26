@@ -373,7 +373,7 @@ fn App() -> Element {
                 div { class: "brand", img { src: branding::icon_uri(), alt: "Media Manager icon" } }
                 div { h1 { "Media Manager" } p { "Organize your library, one clear preview at a time." } }
             }
-                section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Library, naming and API settings",
+                section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Library, naming, ordering, profiles and API settings",
                     fieldset { disabled: busy() || confirming() || resume.read().is_some() || editing().is_some(),
                         div { class: "library-toggle", role: "group", "aria-label": "Library type",
                             button { r#type: "button", class: if form_value.movie { "" } else { "selected" },
@@ -405,6 +405,15 @@ fn App() -> Element {
                             if cfg!(any(target_os = "android", target_os = "ios")) {
                                 p { class: "hint", "Choose a media folder using the system picker. Only that folder is shared with Media Manager." }
                                 p { class: "hint", if connection_value.root.is_empty() { "No folder selected" } else { "Media folder selected" } }
+                            } else {
+                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
+                                    oninput: move |e| connection.write().root = e.value() } }
+                            }
+                        }
+                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
+                            oninput: move |e| form.write().folder = e.value() } }
+                        if !connection_value.remote {
+                            if cfg!(any(target_os = "android", target_os = "ios")) {
                                 button { class: "secondary", onclick: move |_| {
                                     #[cfg(any(target_os = "android", target_os = "ios"))]
                                     spawn(async move {
@@ -415,8 +424,6 @@ fn App() -> Element {
                                     });
                                 }, "Choose media folder" }
                             } else {
-                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
-                                    oninput: move |e| connection.write().root = e.value() } }
                                 button { class: "secondary", onclick: move |_| {
                                     #[cfg(all(feature = "desktop", not(any(target_os = "android", target_os = "ios"))))]
                                     {
@@ -433,10 +440,8 @@ fn App() -> Element {
                                 }, "Browse folders" }
                             }
                         }
-                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
-                            oninput: move |e| form.write().folder = e.value() } }
                         }
-                        library_tools::Pairing {connection,busy,message}
+                        library_tools::Pairing {connection,form,busy,message}
                         section { class: "settings-group",
                             h2 { "API settings" }
                             if !form_value.movie {
@@ -497,22 +502,6 @@ fn App() -> Element {
                         if matches!(form_value.source.as_str(),"tvmaze"|"omdb"|"custom") && (!form_value.movie || form_value.source=="omdb") {
                             library_tools::MatchPicker {form,connection,busy,message}
                         }
-                        library_tools::NumberingOptions {form}
-                        label { "Naming format"
-                            select { value: if form_value.jellyfin { "jellyfin" } else if form_value.plex { "plex" } else { "none" },
-                                onchange: move |e| {
-                                    let value = e.value();
-                                    let mut current = form.write();
-                                    current.plex = value == "plex";
-                                    current.jellyfin = value == "jellyfin";
-                                },
-                                option { value: "none", "None" }
-                                option { value: "plex", if form_value.movie { "Plex movie naming" } else { "Plex episode naming" } }
-                                option { value: "jellyfin", "Jellyfin naming" }
-                            }
-                        }
-                        p {class:"hint",if form_value.movie {if form_value.plex || form_value.jellyfin {"Example: Movie (2020).mkv"}else{"Example: Movie.mkv"}}else if form_value.jellyfin {"Example: Series (2020) S01E01 - Pilot.mkv"}else if form_value.plex {"Example: Series (2020) - S01E01 - Pilot.mkv"}else {"Example: S01E01 - Pilot.mkv"}}
-                        library_tools::Profiles {form,message}
                         if !form_value.movie {
                             if form_value.source == "manual" {
                                 label { "Episode titles, one per line" textarea { rows: "6", value: "{form_value.titles}",
@@ -529,6 +518,28 @@ fn App() -> Element {
                                 p { class: "hint", "Supports season headings with summary cells and simple numbered tables." }
                             }
                         }
+                        }
+                        section { class: "settings-group ordering-group",
+                            h2 { "Ordering" }
+                            label { "Naming format"
+                                select { value: if form_value.jellyfin { "jellyfin" } else if form_value.plex { "plex" } else { "none" },
+                                    onchange: move |e| {
+                                        let value = e.value();
+                                        let mut current = form.write();
+                                        current.plex = value == "plex";
+                                        current.jellyfin = value == "jellyfin";
+                                    },
+                                    option { value: "none", "None" }
+                                    option { value: "plex", if form_value.movie { "Plex movie naming" } else { "Plex episode naming" } }
+                                    option { value: "jellyfin", "Jellyfin naming" }
+                                }
+                            }
+                            p {class:"hint",if form_value.movie {if form_value.plex || form_value.jellyfin {"Example: Movie (2020).mkv"}else{"Example: Movie.mkv"}}else if form_value.jellyfin {"Example: Series (2020) S01E01 - Pilot.mkv"}else if form_value.plex {"Example: Series (2020) - S01E01 - Pilot.mkv"}else {"Example: S01E01 - Pilot.mkv"}}
+                            library_tools::NumberingOptions {form}
+                        }
+                        section { class: "settings-group profiles-group",
+                            h2 { "Profiles" }
+                            library_tools::Profiles {form,message}
                         }
                         div { class: "settings-footer",
                         button { class: "primary", disabled: busy(), onclick: move |_| {
