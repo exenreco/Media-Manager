@@ -146,9 +146,11 @@ jobs:
           PY
       - name: Install and launch in iOS Simulator
         run: python3 scripts/mobile_smoke.py --platform ios --device "$SMOKE_SIMULATOR" --app "$SMOKE_IOS_APP" --evidence target/mobile-validation/ios
-      - name: Archive simulator app
-        if: success()
-        run: ditto -c -k --sequesterRsrc --keepParent "$SMOKE_IOS_APP" target/mobile-validation/ios/Media-Manager-simulator.zip
+      - name: Archive simulator app for diagnostics
+        if: always() && env.SMOKE_IOS_APP != ''
+        run: |
+          mkdir -p target/mobile-validation/ios
+          ditto -c -k --sequesterRsrc --keepParent "$SMOKE_IOS_APP" target/mobile-validation/ios/Media-Manager-simulator.zip
       - uses: actions/upload-artifact@v4
         if: always()
         with:

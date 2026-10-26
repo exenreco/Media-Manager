@@ -3,6 +3,7 @@ from pathlib import Path
 import plistlib
 import tempfile
 import stat
+import struct
 import unittest
 
 spec = importlib.util.spec_from_file_location('packaging', Path(__file__).parents[1] / 'embed_ad_frameworks.py')
@@ -79,6 +80,33 @@ class PlatformMetadata(unittest.TestCase):
             packaging.validate_platform(' platform 2\n', 'iphonesimulator')
         with self.assertRaises(ValueError):
             packaging.validate_platform(' platform 7\n', 'iphoneos')
+
+
+class StaticSDKs(unittest.TestCase):
+    def test_universal_static_archive_is_not_a_dynamic_framework(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'SDK'
+            path.write_bytes(b'\xca\xfe\xba\xbe' + struct.pack('>I', 2)
+                             + struct.pack('>IIIII', 0x1000007, 3, 48, 8, 0)
+                             + struct.pack('>IIIII', 0x100000c, 0, 56, 8, 0)
+                             + b'!<arch>\n!<arch>\n')
+            self.assertTrue(packaging.is_static_archive(path))
+            path.write_bytes(b'\xcf\xfa\xed\xfe' + b'\x00' * 24)
+            self.assertFalse(packaging.is_static_archive(path))
+
+    def test_static_privacy_resources_are_kept_without_embedding_archive(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            framework = root / 'source' / 'GoogleMobileAds.framework'
+            framework.mkdir(parents=True)
+            (framework / 'GoogleMobileAds').write_bytes(b'!<arch>\n')
+            (framework / 'PrivacyInfo.xcprivacy').write_bytes(b'privacy manifest')
+            app = root / 'Example.app'
+            (app / 'Frameworks' / 'GoogleMobileAds.framework').mkdir(parents=True)
+            resources = packaging.copy_static_resources(framework, app, 'GoogleMobileAds')
+            self.assertEqual((resources / 'PrivacyInfo.xcprivacy').read_bytes(), b'privacy manifest')
+            self.assertFalse((app / 'Frameworks' / 'GoogleMobileAds.framework').exists())
+            self.assertFalse((resources / 'GoogleMobileAds').exists())
 
 
 if __name__ == '__main__':

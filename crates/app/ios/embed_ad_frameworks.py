@@ -1,10 +1,11 @@
-"""Finish a Dioxus iOS bundle with Google's binary SDKs, then re-sign it on macOS."""
+"""Package Google SDK resources/dynamic frameworks, then re-sign the iOS app."""
 import argparse
 from pathlib import Path
 import plistlib
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 
@@ -42,6 +43,62 @@ def make_writable(root):
         if item.is_dir():
             mode |= stat.S_IXUSR
         item.chmod(mode)
+
+
+def is_static_archive(binary):
+    with binary.open('rb') as source:
+        header = source.read(8)
+        if header == b'!<arch>\n':
+            return True
+        layouts = {b'\xca\xfe\xba\xbe': ('>', False), b'\xbe\xba\xfe\xca': ('<', False),
+                   b'\xca\xfe\xba\xbf': ('>', True), b'\xbf\xba\xfe\xca': ('<', True)}
+        if header[:4] not in layouts:
+            return False
+        endian, wide = layouts[header[:4]]
+        count = struct.unpack(endian + 'I', header[4:])[0]
+        if not 1 <= count <= 32:
+            raise ValueError('Invalid universal framework architecture count')
+        size = 32 if wide else 20
+        offsets = []
+        for _ in range(count):
+            row = source.read(size)
+            if len(row) != size:
+                raise ValueError('Truncated universal framework header')
+            offsets.append(struct.unpack(endian + ('IIQQII' if wide else 'IIIII'), row)[2])
+        archives = []
+        for offset in offsets:
+            source.seek(offset)
+            archives.append(source.read(8) == b'!<arch>\n')
+        if any(archives) and not all(archives):
+            raise ValueError('Mixed static/dynamic framework slices')
+        return all(archives)
+
+
+def copy_static_resources(source, app, name):
+    # SwiftPM already links these archives into DioxusSwiftPlugins. An archive
+    # inside Frameworks is not a loadable Mach-O dylib and breaks installation.
+    target = app / 'Frameworks' / (name + '.framework')
+    if not target.resolve().is_relative_to(app.resolve()):
+        raise ValueError('Framework destination escapes app bundle')
+    if target.exists():
+        shutil.rmtree(target)
+    resources = app / (name + 'Resources.bundle')
+    if not resources.resolve().is_relative_to(app.resolve()):
+        raise ValueError('Resource destination escapes app bundle')
+    resources.mkdir(exist_ok=True)
+    for item in source.iterdir():
+        if item.name in (name, 'Info.plist', 'Headers', 'PrivateHeaders', 'Modules', '_CodeSignature'):
+            continue
+        destination = resources / item.name
+        if item.is_dir():
+            shutil.copytree(item, destination, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, destination)
+    with (resources / 'Info.plist').open('wb') as output:
+        plistlib.dump({'CFBundleIdentifier': 'com.mediamanager.resources.' + name,
+                      'CFBundleName': name + 'Resources', 'CFBundlePackageType': 'BNDL',
+                      'CFBundleVersion': '1'}, output)
+    return resources
 
 
 def platform_info(info, sdk, version):
@@ -92,9 +149,13 @@ def main():
         target = frameworks / (name + '.framework')
         if not target.resolve().is_relative_to(app):
             parser.error('Framework destination escapes app bundle')
-        shutil.copytree(source, target, dirs_exist_ok=True)
-        make_writable(target)
-        run('xcrun', 'lipo', str(target / name), '-verify_arch', args.arch)
+        run('xcrun', 'lipo', str(source / name), '-verify_arch', args.arch)
+        if is_static_archive(source / name):
+            copy_static_resources(source, app, name)
+            print(f'Preserved {name} resources; static SDK code is linked into the Swift plugin')
+        else:
+            shutil.copytree(source, target, dirs_exist_ok=True)
+            make_writable(target)
     # SDK frameworks are loaded from the packaged bundle, not SwiftPM build paths.
     load_commands = run('xcrun', 'otool', '-l', str(plugin))
     if 'path @loader_path/.. ' not in load_commands:
