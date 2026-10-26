@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import plistlib
 import tempfile
+import stat
 import unittest
 
 spec = importlib.util.spec_from_file_location('packaging', Path(__file__).parents[1] / 'embed_ad_frameworks.py')
@@ -47,6 +48,14 @@ class FrameworkSlices(unittest.TestCase):
         self.save()
         with self.assertRaises(ValueError):
             packaging.select_slice(self.root, 'iphoneos', 'arm64')
+
+    def test_copied_read_only_sdk_can_be_resigned(self):
+        binary = self.root / 'ios-arm64' / 'Example.framework' / 'Example'
+        binary.write_bytes(b'framework')
+        binary.chmod(stat.S_IRUSR)
+        packaging.make_writable(binary.parent)
+        self.assertTrue(binary.stat().st_mode & stat.S_IWUSR)
+        binary.write_bytes(b'resigned framework')
 
 
 if __name__ == '__main__':

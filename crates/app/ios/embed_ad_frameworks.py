@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -28,6 +29,18 @@ def run(*args):
     if result.returncode:
         raise RuntimeError(f"{' '.join(args)} failed:\n{result.stdout}{result.stderr}")
     return result.stdout
+
+
+def make_writable(root):
+    # SwiftPM artifacts may be read-only. Change only the copied app framework,
+    # so codesign can replace its vendor signature and write its resource seal.
+    for item in [root, *root.rglob('*')]:
+        if item.is_symlink():
+            continue
+        mode = item.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR
+        if item.is_dir():
+            mode |= stat.S_IXUSR
+        item.chmod(mode)
 
 
 def main():
@@ -61,6 +74,7 @@ def main():
         if not target.resolve().is_relative_to(app):
             parser.error('Framework destination escapes app bundle')
         shutil.copytree(source, target, dirs_exist_ok=True)
+        make_writable(target)
         run('xcrun', 'lipo', str(target / name), '-verify_arch', args.arch)
     # SDK frameworks are loaded from the packaged bundle, not SwiftPM build paths.
     load_commands = run('xcrun', 'otool', '-l', str(plugin))
