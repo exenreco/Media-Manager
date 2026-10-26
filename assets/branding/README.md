@@ -8,13 +8,7 @@ Original artwork generated with the built-in ImageGen tool.
   layered cinematic play portal; transparent exterior.
 - `prompts.json`: the final generation prompt set and tool mode.
 - `references/`: local-only user-supplied design references, excluded from Git
-  and release archives. The links below preserve their design context.
-
-The [Copilot reference](https://1000logos.net/wp-content/uploads/2023/11/Copilot-Logo-history.png)
-informed the folded-band treatment. The
-[Photoshop splash reference](https://ajdesignco.com/wp-content/uploads/2016/11/photoshop-2017-1030x649.png)
-informed the split information/artwork composition. The final TV/play mark and
-portal illustration were created for this application.
+  and release archives.
 
 The app embeds both PNG masters, preserving alpha without relying on external
 asset paths. The icon appears in the header and native desktop window; the

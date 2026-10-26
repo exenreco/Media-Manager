@@ -13,9 +13,9 @@ MIT does not relicense third-party libraries, SDKs, artwork or provider data.
 - TVMaze data/artwork is subject to the [TVMaze API terms](https://www.tvmaze.com/api).
   OMDb data/artwork is subject to the [OMDb terms](https://www.omdbapi.com/legal.htm).
   Provider artwork is fetched at runtime and is not part of the app's original art.
-- The Copilot and Photoshop design-reference images are third-party works.
+- The third party design-reference images are third-party works.
   Local copies under assets/branding/references are excluded from Git and releases.
-  Source links and design context remain in assets/branding/README.md.
+  Branding notes remain in assets/branding/README.md.
 
 Do not include developer credentials, signing keys or personal library data in
 source or binary distributions.
