@@ -24,7 +24,10 @@ def select_slice(container, sdk, arch):
 
 
 def run(*args):
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(f"{' '.join(args)} failed:\n{result.stdout}{result.stderr}")
+    return result.stdout
 
 
 def main():
@@ -58,7 +61,7 @@ def main():
         if not target.resolve().is_relative_to(app):
             parser.error('Framework destination escapes app bundle')
         shutil.copytree(source, target, dirs_exist_ok=True)
-        run('xcrun', 'lipo', '-verify_arch', args.arch, str(target / name))
+        run('xcrun', 'lipo', str(target / name), '-verify_arch', args.arch)
     # SDK frameworks are loaded from the packaged bundle, not SwiftPM build paths.
     load_commands = run('xcrun', 'otool', '-l', str(plugin))
     if 'path @loader_path/.. ' not in load_commands:

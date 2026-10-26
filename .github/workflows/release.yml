@@ -172,6 +172,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_TAG }}
+      - name: Check out packaging tools from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios-sim
@@ -191,7 +197,7 @@ jobs:
           app=$(find target/dx -type d -name '*.app' | head -n 1)
           artifacts=$(find target -type d -path '*/mediamanagerads/.build/artifacts' | head -n 1)
           test -n "$app" && test -n "$artifacts"
-          python3 crates/app/ios/embed_ad_frameworks.py --app "$app" --artifacts "$artifacts" --sdk iphonesimulator --arch arm64 --identity -
+          python3 .release-tools/crates/app/ios/embed_ad_frameworks.py --app "$app" --artifacts "$artifacts" --sdk iphonesimulator --arch arm64 --identity -
           ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Media-Manager-${RELEASE_TAG#v}-ios-arm64-simulator.zip"
           cd dist
           shasum -a 256 *.zip > ios-SHA256SUMS.txt

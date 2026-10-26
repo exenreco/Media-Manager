@@ -2,6 +2,7 @@
 .tools/
 /target/
 /dist/
+/.release-tools/
 
 # Editor and operating-system files
 *.log

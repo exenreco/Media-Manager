@@ -1,6 +1,9 @@
 name: Rust desktop checks
 permissions:
   contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
 on:
   push:
     branches: ['**']
