@@ -13,6 +13,6 @@ let package = Package(
         .target(name: "MediaManagerAds", dependencies: [
             .product(name: "GoogleMobileAds", package: "swift-package-manager-google-mobile-ads"),
             .product(name: "GoogleUserMessagingPlatform", package: "swift-package-manager-google-user-messaging-platform")
-        ], linkerSettings: [.unsafeFlags(["-ObjC"])])
+        ], linkerSettings: [.unsafeFlags(["-Xlinker", "-ObjC"])])
     ]
 )

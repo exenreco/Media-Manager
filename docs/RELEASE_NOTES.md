@@ -1,4 +1,4 @@
-# Media Manager 0.1.0 preview
+# Media Manager preview
 
 Rust UI and backend for TV/movie rename previews, season grouping, missing-file
 reporting, editable proposed filenames, local/remote media playback, poster
