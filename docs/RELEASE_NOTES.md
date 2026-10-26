@@ -1,4 +1,6 @@
-# Media Manager v0.1.2 preview
+# Media Manager v0.1.3 preview
+
+Supersedes v0.1.2 with corrected iOS Swift-product registration.
 
 ## Changes
 

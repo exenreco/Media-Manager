@@ -6,6 +6,9 @@ extern "Swift" {
     pub type MediaManagerAds;
     pub fn attach(this: &MediaManagerAds, controller: u64);
     pub fn detach(this: &MediaManagerAds);
+    pub type MediaManagerStorage;
+    pub fn attach_storage(this: &MediaManagerStorage, controller: u64);
+    pub fn detach_storage(this: &MediaManagerStorage);
 }
 
 #[component]

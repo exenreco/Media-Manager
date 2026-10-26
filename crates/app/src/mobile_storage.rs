@@ -12,12 +12,7 @@ use tv_manager_core::{
 };
 
 #[cfg(target_os = "ios")]
-#[manganis::ffi("ios")]
-extern "Swift" {
-    pub type MediaManagerStorage;
-    pub fn attach(this: &MediaManagerStorage, controller: u64);
-    pub fn detach(this: &MediaManagerStorage);
-}
+use crate::ads::{attach_storage, detach_storage, MediaManagerStorage};
 
 #[component]
 pub fn Bridge() -> Element {
@@ -27,14 +22,14 @@ pub fn Bridge() -> Element {
         let plugin = MediaManagerStorage::new().ok();
         if let Some(plugin) = &plugin {
             let controller = dioxus::mobile::window().window.ui_view_controller();
-            let _ = attach(plugin, controller as u64);
+            let _ = attach_storage(plugin, controller as u64);
         }
         std::rc::Rc::new(plugin)
     });
     #[cfg(target_os = "ios")]
     use_drop(move || {
         if let Some(plugin) = native.as_ref() {
-            let _ = detach(plugin);
+            let _ = detach_storage(plugin);
         }
     });
     rsx! {}

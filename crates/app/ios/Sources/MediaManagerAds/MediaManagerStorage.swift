@@ -15,13 +15,13 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
 
     public override init() { super.init() }
 
-    @objc public func attach(_ address: UInt64) {
+    @objc public func attachStorage(_ address: UInt64) {
         guard let pointer = UnsafeRawPointer(bitPattern: UInt(address)) else { return }
         let host = Unmanaged<UIViewController>.fromOpaque(pointer).takeUnretainedValue()
         controller = host; browser = findWebView(host.view)
         browser?.configuration.userContentController.add(self, name: "MediaManagerStorage")
     }
-    @objc public func detach() {
+    @objc public func detachStorage() {
         browser?.configuration.userContentController.removeScriptMessageHandler(forName: "MediaManagerStorage")
         previewRoot?.stopAccessingSecurityScopedResource(); previewRoot = nil
         browser = nil; controller = nil
