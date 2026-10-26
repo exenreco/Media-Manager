@@ -6,6 +6,11 @@ this license does not relicense third-party libraries, SDKs, artwork or provider
 
 - Rust dependency versions and sources are recorded in Cargo.lock. Dioxus,
   Tokio, Axum, reqwest and their dependencies carry their own notices.
+- The Linux Flatpak uses the independently distributed GNOME/Flathub runtime.
+  Small app-specific shared libraries copied from Ubuntu retain their package
+  copyrights and licenses under the app's share/doc directory. Corresponding
+  package source archives and copyright notices are supplied in the matching
+  linux-runtime-sources.tar.gz release asset.
 - Google Mobile Ads and User Messaging Platform SDKs are governed by Google's
   SDK licenses and AdMob terms. Their frameworks and bundled privacy manifests
   must be preserved in mobile distributions. Public AdMob app/ad-unit IDs are

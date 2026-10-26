@@ -236,7 +236,7 @@ jobs:
           flatpak --user install --noninteractive dist/*.flatpak
       - name: Verify app starts in the runtime
         run: |
-          dbus-run-session -- xvfb-run -a bash .release-tools/scripts/smoke_flatpak.sh
+          xvfb-run -a dbus-run-session -- bash .release-tools/scripts/smoke_flatpak.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux-managed-runtime
