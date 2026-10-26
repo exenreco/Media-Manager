@@ -3,7 +3,8 @@
 ## Automated platform previews
 
 The `Platform releases` workflow runs when a version tag such as `v0.1.0` is pushed.
-It can also rebuild an existing tag through Actions → Platform releases → Run workflow.
+It can also rebuild an existing tag through Actions → Platform releases → Run workflow;
+choose all platforms or just desktop, Android or iOS when retrying packaging.
 The tag must exactly match `[workspace.package].version` in Cargo.toml.
 
 ```sh

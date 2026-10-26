@@ -9,6 +9,12 @@ on:
         description: Existing version tag to build (for example v0.1.0)
         required: true
         type: string
+      platform:
+        description: Platform to rebuild
+        required: true
+        default: all
+        type: choice
+        options: [all, desktop, android, ios]
 
 permissions:
   contents: read
@@ -48,6 +54,7 @@ jobs:
 
   desktop:
     needs: prepare
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'desktop'
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +114,7 @@ jobs:
 
   android:
     needs: prepare
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -122,6 +130,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - name: Install native Android toolchain
         run: |
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
@@ -153,6 +164,7 @@ jobs:
 
   ios:
     needs: prepare
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'ios'
     runs-on: macos-15
     permissions:
       contents: write
