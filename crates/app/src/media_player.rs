@@ -173,7 +173,7 @@ impl Media {
     }
 }
 
-/// A fresh opaque ID revokes the previous selection's URL, including queued reads.
+/// A fresh opaque ID rejects new requests for the previous selection's URL.
 pub fn use_media_handler(media: Signal<Option<Media>>) {
     native::use_asset_handler("media-preview", move |request, responder| {
         let current = media.read().clone();

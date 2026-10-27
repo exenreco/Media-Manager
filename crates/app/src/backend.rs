@@ -284,7 +284,15 @@ impl Connection {
         index: usize,
     ) -> Result<crate::media_player::Media> {
         use crate::media_player::{Location, Media};
-        let path = tv_manager_core::rename::playback_path(&plan, index)?;
+        let path = if self.remote {
+            plan.tasks
+                .get(index)
+                .context("File selection is unavailable")?
+                .source
+                .clone()
+        } else {
+            tv_manager_core::rename::playback_path(&plan, index)?
+        };
         let mime = crate::media_player::mime(&path);
         let id = uuid::Uuid::new_v4().to_string();
         if !self.remote {
