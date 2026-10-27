@@ -3,6 +3,7 @@ import WebKit
 import UniformTypeIdentifiers
 import QuickLook
 import CryptoKit
+import AVFoundation
 
 /// Security-scoped folder access; no access outside folders chosen in Files.
 @MainActor
@@ -43,6 +44,30 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
               url.scheme == "dioxus", url.host == "index.html",
               let text = message.body as? String, let bytes = text.data(using: .utf8),
               let command = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else { return }
+        if command["op"] as? String == "appDirectories" {
+            do {
+                let state = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                reply(command, ["state": state.path])
+            } catch { reply(command, ["error": error.localizedDescription]) }
+            return
+        }
+        if command["op"] as? String == "scanPairing" {
+            guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before scanning"]); return }
+            pending = command
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                Task { @MainActor in
+                    guard let self, self.pending != nil else { return }
+                    guard granted else { self.pending = nil; self.reply(command, ["error": "Camera permission denied. Enable Camera access in Settings to scan."]); return }
+                    let scanner = PairingCameraController { [weak self] result in
+                        guard let self else { return }; self.pending = nil
+                        switch result { case .success(let text): self.reply(command, ["text": text]); case .failure(let error): self.reply(command, ["error": error.localizedDescription]) }
+                    }
+                    scanner.modalPresentationStyle = .fullScreen
+                    controller.present(scanner, animated: true)
+                }
+            }
+            return
+        }
         if command["op"] as? String == "pick" || command["op"] as? String == "pickImage" {
             guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before choosing a folder"]); return }
             pending = command
@@ -132,6 +157,13 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
     nonisolated private static func execute(_ command: [String: Any], _ root: URL) throws -> [String: Any] {
         let manager = FileManager.default
         let op = command["op"] as? String ?? ""
+        if op == "checkFolder" {
+            guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true,
+                  FileManager.default.isReadableFile(atPath: root.path) else {
+                throw NSError(domain: "Storage", code: 1, userInfo: [NSLocalizedDescriptionKey: "Folder access expired. Choose the folder again."])
+            }
+            return ["connected": true]
+        }
         if op == "list" {
             var entries = [[String: Any]]()
             func walk(_ folder: URL, _ prefix: String, _ depth: Int) throws {
@@ -155,6 +187,18 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
         guard let last = pieces.last else { throw NSError(domain: "Storage", code: 1) }
         let parent = try resolve(root, pieces.dropLast().joined(separator: "/"))
         let source = parent.appendingPathComponent(last)
+        if op == "readMedia" {
+            let file = try resolve(root, path)
+            let values = try attributes(file)
+            let size = (values["size"] as? NSNumber)?.uint64Value ?? 0
+            guard let offset = (command["offset"] as? NSNumber)?.uint64Value, let count = command["count"] as? Int,
+                  count >= 0, count <= 1048576, offset <= size, UInt64(count) <= size-offset else { throw NSError(domain: "Storage", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid media range"]) }
+            let handle = try FileHandle(forReadingFrom: file); defer { try? handle.close() }
+            try handle.seek(toOffset: offset)
+            let data = count == 0 ? Data() : (try handle.read(upToCount: count) ?? Data())
+            guard data.count == count else { throw NSError(domain: "Storage", code: 1, userInfo: [NSLocalizedDescriptionKey: "Incomplete media read"]) }
+            return ["size": size, "data": data.base64EncodedString()]
+        }
         if op == "hash" {
             let before=try attributes(source)
             let file=try FileHandle(forReadingFrom: source); defer {try? file.close()}
@@ -185,6 +229,27 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
                 } catch { moveError = error }
             }
             if let error = coordinationError ?? (moveError as NSError?) { throw error }
+            return [:]
+        }
+        if op == "savePoster" {
+            guard ["jpg","jpeg","png","webp"].contains(source.pathExtension.lowercased()),
+                  let text=command["data"] as? String, let bytes=Data(base64Encoded:text), bytes.count<=10*1024*1024 else {throw NSError(domain:"Storage",code:1)}
+            let coordinator=NSFileCoordinator();var coordinationError:NSError?;var saveError:Error?
+            coordinator.coordinate(writingItemAt:source,options:[],error:&coordinationError) { destination in
+                do {
+                    if manager.fileExists(atPath:destination.path) {
+                        _ = try resolve(root,path)
+                        guard command["replace"] as? Bool == true else {throw NSError(domain:"Storage",code:1,userInfo:[NSLocalizedDescriptionKey:"Confirm Replace existing poster first"])}
+                        let attrs=try attributes(destination)
+                        guard ((attrs["size"] as? NSNumber)?.intValue ?? Int.max) <= 10*1024*1024 else {throw NSError(domain:"Storage",code:1)}
+                        let old=try Data(contentsOf:destination)
+                        let hash=SHA256.hash(data:old).map{String(format:"%02x",$0)}.joined()
+                        guard hash==command["expected"] as? String else {throw NSError(domain:"Storage",code:1,userInfo:[NSLocalizedDescriptionKey:"Existing poster changed; select it again"])}
+                        try bytes.write(to:destination,options:[.atomic])
+                    } else {try bytes.write(to:destination,options:[.withoutOverwriting])}
+                } catch {saveError=error}
+            }
+            if let error=coordinationError ?? (saveError as NSError?) {throw error}
             return [:]
         }
         if op == "write" {

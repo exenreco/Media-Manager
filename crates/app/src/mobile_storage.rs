@@ -48,6 +48,26 @@ async fn command(value: Value) -> Result<Value> {
     Ok(response)
 }
 
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn initialize_settings() -> Result<()> {
+    let result = command(json!({"op":"appDirectories"})).await?;
+    crate::session::initialize_mobile(PathBuf::from(
+        result["state"]
+            .as_str()
+            .context("Native settings directory unavailable")?,
+    ))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn check_folder(root: &str) -> Result<()> {
+    let response = command(json!({"op":"checkFolder","root":root})).await?;
+    anyhow::ensure!(
+        response["connected"] == true,
+        "Folder permission is unavailable. Choose the folder again."
+    );
+    Ok(())
+}
+
 pub async fn pick() -> Result<String> {
     let result = command(json!({"op":"pick"})).await?;
     Ok(result["root"]
@@ -253,25 +273,43 @@ pub async fn apply(mut plan: RenamePlan) -> Result<RenamePlan> {
     Ok(plan)
 }
 
-pub async fn play(plan: &RenamePlan, index: usize) -> Result<Option<String>> {
-    let (root, path) = {
-        let guard = LIBRARY.lock().unwrap();
-        let library = guard.as_ref().context("Build a preview first")?;
-        if library.plan != plan.id.to_string() {
-            bail!("Preview expired");
-        }
-        let path = rename::playback_path(plan, index)?;
-        (library.root.clone(), relative(&library.mirror, &path)?)
-    };
-    command(json!({"op":"play","root":root,"path":path})).await?;
-    Ok(None)
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn media_document(plan: &RenamePlan, index: usize) -> Result<(String, String)> {
+    let guard = LIBRARY.lock().unwrap();
+    let library = guard.as_ref().context("Build a preview first")?;
+    if library.plan != plan.id.to_string() {
+        bail!("Preview expired");
+    }
+    let path = rename::playback_path(plan, index)?;
+    Ok((library.root.clone(), relative(&library.mirror, &path)?))
 }
 
-pub async fn pick_image() -> Result<Vec<u8>> {
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn read_media(
+    root: &str,
+    path: &str,
+    offset: u64,
+    count: usize,
+) -> Result<(u64, Vec<u8>)> {
     use base64::Engine;
-    let response = command(json!({"op":"pickImage"})).await?;
-    Ok(base64::engine::general_purpose::STANDARD
-        .decode(response["data"].as_str().context("Missing QR image")?)?)
+    anyhow::ensure!(count <= 1024 * 1024, "Media read too large");
+    let response =
+        command(json!({"op":"readMedia","root":root,"path":path,"offset":offset,"count":count}))
+            .await?;
+    let size = response["size"].as_u64().context("Missing media size")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(response["data"].as_str().unwrap_or(""))?;
+    anyhow::ensure!(bytes.len() == count, "Incomplete media read");
+    Ok((size, bytes))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn scan_pairing() -> Result<String> {
+    let response = command(json!({"op":"scanPairing"})).await?;
+    Ok(response["text"]
+        .as_str()
+        .context("Scanner returned no pairing invitation")?
+        .to_string())
 }
 #[derive(Serialize, Deserialize)]
 struct MobileRecord {
@@ -514,4 +552,99 @@ mod tests {
             .filter(|t| !t.directory)
             .all(|t| t.season == Some(1)));
     }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn artwork_context(plan: &RenamePlan) -> Result<(String, PathBuf)> {
+    let guard = LIBRARY.lock().unwrap();
+    let library = guard.as_ref().context("Build a preview first")?;
+    anyhow::ensure!(library.plan == plan.id.to_string(), "Preview expired");
+    Ok((library.root.clone(), library.mirror.clone()))
+}
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn artwork(plan: &RenamePlan) -> Result<Vec<tv_manager_core::artwork::Poster>> {
+    let (root, mirror) = artwork_context(plan)?;
+    let mut slots = tv_manager_core::artwork::slots(plan)?;
+    // Poster paths are relative to the scoped preview folder, not the tree root.
+    let folder = LIBRARY.lock().unwrap().as_ref().unwrap().folder.clone();
+    let mut total = 0;
+    for slot in &mut slots {
+        if let Some(path) = &slot.local_path {
+            let path = std::path::Path::new(&folder)
+                .join(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let (size, _) = read_media(&root, &path, 0, 0).await?;
+            anyhow::ensure!(size <= 10 * 1024 * 1024, "Poster exceeds 10 MB");
+            total += size;
+            anyhow::ensure!(total <= 64 * 1024 * 1024, "Poster gallery exceeds 64 MB");
+            let mut bytes = Vec::new();
+            while bytes.len() < (size as usize) {
+                let count = (size as usize - bytes.len()).min(1024 * 1024);
+                let (_, chunk) = read_media(&root, &path, bytes.len() as u64, count).await?;
+                bytes.extend(chunk);
+            }
+            slot.fingerprint = Some(tv_manager_core::artwork::fingerprint(&bytes)?);
+            if let Ok((uri, hash)) = tv_manager_core::artwork::image_data(&bytes) {
+                slot.local = Some(uri);
+                slot.fingerprint = Some(hash);
+            }
+        }
+    }
+    let _ = mirror;
+    Ok(slots)
+}
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn save_artwork(
+    plan: &RenamePlan,
+    save: &tv_manager_core::artwork::Save,
+) -> Result<Vec<tv_manager_core::artwork::Poster>> {
+    use base64::Engine;
+    let (root, mirror) = artwork_context(plan)?;
+    let slot = tv_manager_core::artwork::validate_save(plan, save)?;
+    let bytes = tv_manager_core::artwork::fetch(&save.url).await?;
+    let relative_path = slot.local_path.as_ref().unwrap_or(&slot.id);
+    let bytes = tv_manager_core::artwork::encode_for_path(&bytes, relative_path)?;
+    let folder = LIBRARY.lock().unwrap().as_ref().unwrap().folder.clone();
+    let path = std::path::Path::new(&folder)
+        .join(relative_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    command(json!({"op":"savePoster","root":root,"path":path,"data":base64::engine::general_purpose::STANDARD.encode(&bytes),"replace":save.replace,"expected":save.expected})).await?;
+    // Retain existence in the names-only mirror for subsequent gallery reads.
+    let marker = mirror.join(&folder).join(relative_path);
+    std::fs::create_dir_all(marker.parent().unwrap())?;
+    std::fs::write(marker, [])?;
+    artwork(plan).await
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn download_artwork(plan: &RenamePlan) -> Result<tv_manager_core::artwork::Batch> {
+    let mut result = tv_manager_core::artwork::Batch {
+        posters: Vec::new(),
+        downloaded: 0,
+        kept: 0,
+        failures: Vec::new(),
+    };
+    for slot in artwork(plan).await? {
+        if slot.local_path.is_some() {
+            result.kept += 1;
+            continue;
+        }
+        let Some(url) = slot.provider else {
+            continue;
+        };
+        let save = tv_manager_core::artwork::Save {
+            slot: slot.id,
+            url,
+            replace: false,
+            expected: None,
+        };
+        match save_artwork(plan, &save).await {
+            Ok(_) => result.downloaded += 1,
+            Err(e) => result.failures.push(format!("{}: {e:#}", slot.title)),
+        }
+    }
+    result.posters = artwork(plan).await?;
+    Ok(result)
 }

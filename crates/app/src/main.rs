@@ -4,14 +4,17 @@ mod ads;
 mod backend;
 mod branding;
 mod library_tools;
+mod media_player;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 mod mobile_storage;
 mod notifications;
+mod onboarding;
 mod pairing;
 mod poster;
 mod preview;
 mod profiles;
 mod session;
+mod workspace;
 
 use backend::Connection;
 use dioxus::prelude::*;
@@ -20,7 +23,13 @@ use tv_manager_core::{
     PlanRequest, Source,
 };
 
-const CSS: &str = include_str!("style.css");
+const CSS: &str = concat!(
+    include_str!("style.css"),
+    "\n",
+    include_str!("workspace.css"),
+    "\n",
+    include_str!("welcome.css")
+);
 
 #[derive(Clone, Copy)]
 struct PanelDrag {
@@ -99,6 +108,9 @@ impl Form {
             )
         };
         let source = match self.source.as_str() {
+            "tmdb" => Source::Tmdb {
+                key: self.options.tmdb_key.clone(),
+            },
             "omdb" => Source::Omdb {
                 key: self.key.clone(),
             },
@@ -126,7 +138,7 @@ impl Form {
             plex: self.plex,
             jellyfin: self.jellyfin,
             source,
-            download_posters: self.download_posters,
+            download_posters: false,
             options: self.options.clone(),
         })
     }
@@ -164,19 +176,22 @@ fn App() -> Element {
     let mut plan = use_signal(|| None::<RenamePlan>);
     let mut snapshot = use_signal(|| None::<(Form, Connection)>);
     let mut busy = use_signal(|| false);
+    let mut refreshing = use_signal(|| false);
     let mut message = use_signal(String::new);
     let mut persistence_error = use_signal(String::new);
     let mut confirming = use_signal(|| false);
     let mut consumed = use_signal(|| false);
-    let mut show_poster_help = use_signal(|| false);
-    let mut editing = use_signal(|| None::<usize>);
-    let mut edit_name = use_signal(String::new);
-    let mut edit_error = use_signal(String::new);
-    let mut playback = use_signal(|| None::<(String, String)>);
-    let mut playback_error = use_signal(String::new);
+    let mut selected = use_signal(|| None::<usize>);
+    let mut selected_artwork = use_signal(|| None::<poster::Selection>);
+    let mut artwork_inventory = use_signal(Vec::<tv_manager_core::artwork::Poster>::new);
+    let mut search = use_signal(String::new);
+    let mut downloading_posters = use_signal(|| false);
+    let mut show_ordering = use_signal(|| false);
     let mut left_width = use_signal(|| 340.0f64);
     let mut right_width = use_signal(|| 300.0f64);
-    let mut active_panel = use_signal(|| "settings");
+    let mut active_panel = use_signal(|| "welcome");
+    let (navigate, mut connection_notice) =
+        onboarding::use_navigation(connection, active_panel, busy);
     let mut drag = use_signal(|| None::<PanelDrag>);
     let mut splash_visible = use_signal(|| {
         cfg!(all(
@@ -189,6 +204,12 @@ fn App() -> Element {
     use_future(move || async move {
         // Yield to the first render so the splash can paint before disk/decryption work.
         tokio::task::yield_now().await;
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if let Err(error) = mobile_storage::initialize_settings().await {
+            message.set(format!("Could not open app settings: {error:#}"));
+            persistence_ready.set(true);
+            return;
+        }
         let saved = tokio::task::spawn_blocking(session::load).await;
         match saved {
             Ok(Ok(previous)) => {
@@ -261,6 +282,71 @@ fn App() -> Element {
         }
     });
 
+    // Debounce edits without disabling the form. Cancelling superseded tasks prevents
+    // older provider responses from replacing a preview for newer details.
+    let pending_preview =
+        use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<dioxus::core::Task>)));
+    use_effect(move || {
+        let f = form();
+        let c = connection();
+        let page = active_panel();
+        let blocked = busy() || confirming() || !persistence_ready() || resume.read().is_some();
+        if let Some(task) = pending_preview.borrow_mut().take() {
+            task.cancel();
+        }
+        refreshing.set(false);
+        if page == "welcome" || blocked {
+            return;
+        }
+        if snapshot
+            .peek()
+            .as_ref()
+            .is_some_and(|(previous_form, previous_connection)| {
+                *previous_form == f && *previous_connection == c
+            })
+            && (plan.peek().is_some() || *consumed.peek())
+        {
+            return;
+        }
+        refreshing.set(true);
+        *pending_preview.borrow_mut() = Some(spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+            if f.name.trim().is_empty() {
+                plan.set(None);
+                selected.set(None);
+                message.set("Enter a title to load your library preview.".into());
+                refreshing.set(false);
+                return;
+            }
+            let request = match f.request() {
+                Ok(request) => request,
+                Err(error) => {
+                    message.set(error.to_string());
+                    refreshing.set(false);
+                    return;
+                }
+            };
+            message.set("Refreshing preview…".into());
+            let result = c.preview(&request).await;
+            if *form.peek() != f || *connection.peek() != c {
+                refreshing.set(false);
+                return;
+            }
+            match result {
+                Ok(preview) => {
+                    selected.set(None);
+                    plan.set(Some(preview));
+                    snapshot.set(Some((f, c)));
+                    consumed.set(false);
+                    message
+                        .set("Preview updated. Review every destination before applying.".into());
+                }
+                Err(error) => message.set(format!("{error:#}")),
+            }
+            refreshing.set(false);
+        }));
+    });
+
     let changed = snapshot
         .read()
         .as_ref()
@@ -293,8 +379,8 @@ fn App() -> Element {
         && !conflict
         && !changed
         && !busy()
-        && !consumed()
-        && editing().is_none();
+        && !refreshing()
+        && !consumed();
     let form_value = form.read().clone();
     let connection_value = connection.read().clone();
     let preview_request = snapshot
@@ -324,29 +410,12 @@ fn App() -> Element {
     } else {
         preview_show.artwork.clone()
     };
-    let poster_title = if artwork_stale || preview_show.name.is_empty() {
-        "Poster preview".into()
-    } else {
-        preview_show.year.map_or_else(
-            || preview_show.name.clone(),
-            |year| format!("{} ({year})", preview_show.name),
-        )
-    };
     let seasons: std::collections::BTreeSet<_> = if artwork_stale {
         Default::default()
     } else {
         preview_show.episodes.iter().map(|e| e.season).collect()
     };
-    let mut carousel_posters = vec![poster::PosterItem {
-        title: poster_title,
-        url: artwork.poster.clone(),
-    }];
-    carousel_posters.extend(seasons.iter().map(|season| poster::PosterItem {
-        title: format!("Season {season:02}"),
-        url: artwork.seasons.get(season).cloned(),
-    }));
     let pending_resume = resume.read().clone();
-    let active_playback = playback.read().clone();
 
     if splash_visible() {
         return rsx! { branding::Splash { progress: startup_progress(), onartworkready: move |_| splash_artwork_ready.set(true), oncontinue: move |_| {
@@ -358,7 +427,8 @@ fn App() -> Element {
     rsx! {
         style { "{CSS}" }
         if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
-        main { class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
+        onboarding::ConnectionIsland {notice:connection_notice,active:active_panel,onlibrary:move |_|navigate.call("preview")}
+        main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
             onpointermove: move |e| {
                 if let Some(start) = drag() {
                     let delta = e.client_coordinates().x - start.x;
@@ -368,55 +438,97 @@ fn App() -> Element {
             },
             onpointerup: move |_| { if drag().is_some() { drag.set(None); } },
             onpointercancel: move |_| drag.set(None),
+            workspace::Titlebar {form,disabled:busy() || confirming() || resume.read().is_some(),context:match active_panel(){"welcome"=>"Get Started","health"=>"Health","settings"=>"Settings","preview"|"inspector"|"posters"=>"Library",_=>"Details"}}
+            if cfg!(not(any(target_os="android",target_os="ios"))) {workspace::ResizeEdges {}}
+            workspace::Navigation {active:active_panel,onnavigate:move|target|navigate.call(target)}
             div { class: "layout", "data-active-panel": active_panel(), style: "--left-width:{left_width}px;--right-width:{right_width}px;",
-            header { class: "app-identity",
-                div { class: "brand", img { src: branding::icon_uri(), alt: "Media Manager icon" } }
-                div { h1 { "Media Manager" } p { "Organize your library, one clear preview at a time." } }
-            }
-                section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Library, naming and API settings",
-                    fieldset { disabled: busy() || confirming() || resume.read().is_some() || editing().is_some(),
-                        div { class: "library-toggle", role: "group", "aria-label": "Library type",
-                            button { r#type: "button", class: if form_value.movie { "" } else { "selected" },
-                                "aria-pressed": (!form_value.movie).to_string(),
-                                onclick: move |_| {let mut f=form.write(); f.movie=false; f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear();}, "TV Shows" }
-                            button { r#type: "button", class: if form_value.movie { "selected" } else { "" },
-                                "aria-pressed": form_value.movie.to_string(),
-                                onclick: move |_| {let mut f=form.write(); f.movie=true; f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear();}, "Movies" }
-                        }
-                        if cfg!(any(target_os = "android", target_os = "ios")) {
-                            ads::NativeAdSlot {}
-                        }
-                        section { class: "settings-group",
-                        h2 { "Connect your library" }
-                        label { "Storage"
-                            select { value: if connection_value.remote { "remote" } else { "local" },
-                                onchange: move |e| connection.write().remote = e.value() == "remote",
-                                option { value: "local", "This device" }
-                                option { value: "remote", "Remote server" }
+                section {class:"panel controls welcome-panel",id:"welcome-screen","aria-label":"Welcome and library connection",
+                    div {class:"welcome-columns",
+                        onboarding::WelcomeIntro {}
+                        div {class:"welcome-settings",
+                            div {class:"welcome-connection welcome-api",
+                                fieldset {disabled:busy() || confirming() || resume.read().is_some(),
+                        section { class: "settings-group api-group",
+                            h2 { "API settings" }
+                            if !form_value.movie {
+                            label { "Episode source"
+                                select { value: "{form_value.source}", onchange: move |e| { let mut f=form.write(); f.source=e.value(); f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear(); },
+                                    option { value: "tvmaze", "TVMaze" }
+                                    option { value: "omdb", "OMDb" }
+                                    option { value: "custom", "Custom TVMaze-compatible API" }
+                                    option { value: "manual", "Manual titles" }
+                                    option { value: "batch", "Batch sequence" }
+                                    option { value: "web", "Episode guide URL" }
+                                }
+                            }
+                            div { class: "provider-settings",
+                            h3 { "Provider configuration" }
+                            if form_value.source == "tvmaze" { p { class: "hint", "TVMaze is ready to use. No API key required." } }
+                            if matches!(form_value.source.as_str(), "manual" | "batch" | "web") { p { class: "hint", "Configure titles, templates or a guide URL in Workspace." } }
+                            if form_value.source == "custom" {
+                                label { "API base URL" input { value: "{form_value.custom}", placeholder: "https://…",
+                                    oninput: move |e| {let mut f=form.write();f.custom=e.value();f.options.selected_id.clear();f.options.poster_override=None;f.options.season_overrides.clear();} } }
+                            }
+                            if form_value.source == "omdb" || form_value.source == "custom" {
+                                label { "API key" input { r#type: "password", value: "{form_value.key}", autocomplete: "off",
+                                    oninput: move |e| form.write().key = e.value() } }
+                            }
                             }
                         }
-                        if connection_value.remote {
+                            else {
+                                label {"Movie source" select {value:if matches!(form_value.source.as_str(),"tmdb"|"omdb"|"custom") {form_value.source.as_str()}else{"manual"},onchange:move|e|{let mut f=form.write();f.source=e.value();f.options.selected_id.clear();f.options.poster_override=None;f.options.season_overrides.clear();},
+                                    option {value:"manual","Entered title and year"} option {value:"tmdb","TMDB"} option {value:"omdb","OMDb"} option {value:"custom","Custom movie API (TMDB-compatible)"}
+                                }}
+                                if form_value.source=="omdb" {label {"OMDb API key" input {r#type:"password",value:"{form_value.key}",oninput:move|e|form.write().key=e.value()}}}
+                                if form_value.source=="custom" {
+                                    label {"Movie API base URL" input {r#type:"url",value:"{form_value.custom}",placeholder:"https://provider.example/api",oninput:move|e|{let mut f=form.write();f.custom=e.value();f.options.selected_id.clear();f.options.poster_override=None;}}}
+                                    label {"Custom API key (optional)" input {r#type:"password",value:"{form_value.key}",autocomplete:"off",oninput:move|e|form.write().key=e.value()}}
+                                    p {class:"hint","Supports TMDB-compatible search/movie and movie/{{id}} responses. Image paths may be TMDB paths or full HTTPS poster URLs."}
+                                }
+                            }
+                            if !form_value.movie || matches!(form_value.source.as_str(),"tmdb"|"omdb") {
+                            label {if form_value.movie && form_value.source=="tmdb" {"TMDB API key"}else{"TMDB artwork API key (optional)"} input {r#type:"password",value:"{form_value.options.tmdb_key}",autocomplete:"off",oninput:move|e|form.write().options.tmdb_key=e.value()}}
+                            p {class:"hint",if form_value.movie && form_value.source=="tmdb" {"Matches movie titles, optional release year, and posters using your TMDB v3 API key."}else{"Adds verified TMDB artwork using the matched IMDb ID. Different season orders require an explicit poster choice."}}
+                            }
+                        }
+                                }
+                            }
+                        div {class:"welcome-connection",
+                            fieldset {disabled:busy() || confirming() || resume.read().is_some(),
+                        section { class: "settings-group connect-group",
+                        h2 { id:"welcome-connection-title",tabindex:"-1","Connect your library" }
+                        workspace::ConnectionTabs {connection}
+                        div {id:"connection-remote-panel",class:"connection-tab-panel",role:"tabpanel","aria-labelledby":"connection-remote-tab",hidden:!connection_value.remote,
                             label { "Server URL" input { r#type: "url", value: "{connection_value.url}",
                                 oninput: move |e| connection.write().url = e.value() } }
                             label { "Bearer token" input { r#type: "password", value: "{connection_value.token}", autocomplete: "off",
                                 oninput: move |e| connection.write().token = e.value() } }
                             p { class: "hint", "Choose a subfolder relative to the server's configured media root. Leave blank for the root." }
-                        } else {
+                            label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01", oninput:move|e|form.write().folder=e.value() } }
+                            library_tools::Pairing {connection,form,busy,message}
+                        }
+                        div {id:"connection-local-panel",class:"connection-tab-panel",role:"tabpanel","aria-labelledby":"connection-local-tab",hidden:connection_value.remote,
                             if cfg!(any(target_os = "android", target_os = "ios")) {
                                 p { class: "hint", "Choose a media folder using the system picker. Only that folder is shared with Media Manager." }
                                 p { class: "hint", if connection_value.root.is_empty() { "No folder selected" } else { "Media folder selected" } }
+                            } else {
+                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
+                                    oninput: move |e| connection.write().root = e.value() } }
+                            }
+                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
+                            oninput: move |e| form.write().folder = e.value() } }
+                        if !connection_value.remote {
+                            if cfg!(any(target_os = "android", target_os = "ios")) {
                                 button { class: "secondary", onclick: move |_| {
                                     #[cfg(any(target_os = "android", target_os = "ios"))]
                                     spawn(async move {
                                         match mobile_storage::pick().await {
-                                            Ok(root) => { connection.write().root = root; message.set("Media folder selected. Build a new preview.".into()); }
+                                            Ok(root) => { connection.write().root = root; message.set("Media folder selected. Open Workspace to refresh the preview.".into()); }
                                             Err(error) => message.set(error.to_string()),
                                         }
                                     });
                                 }, "Choose media folder" }
                             } else {
-                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
-                                    oninput: move |e| connection.write().root = e.value() } }
                                 button { class: "secondary", onclick: move |_| {
                                     #[cfg(all(feature = "desktop", not(any(target_os = "android", target_os = "ios"))))]
                                     {
@@ -433,46 +545,23 @@ fn App() -> Element {
                                 }, "Browse folders" }
                             }
                         }
-                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
-                            oninput: move |e| form.write().folder = e.value() } }
                         }
-                        library_tools::Pairing {connection,busy,message}
-                        section { class: "settings-group",
-                            h2 { "API settings" }
-                            if !form_value.movie {
-                            label { "Episode source"
-                                select { value: "{form_value.source}", onchange: move |e| { let mut f=form.write(); f.source=e.value(); f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear(); },
-                                    option { value: "tvmaze", "TVMaze" }
-                                    option { value: "omdb", "OMDb" }
-                                    option { value: "custom", "Custom TVMaze-compatible API" }
-                                    option { value: "manual", "Manual titles" }
-                                    option { value: "batch", "Batch sequence" }
-                                    option { value: "web", "Episode guide URL" }
-                                }
-                            }
-                            div { class: "provider-settings",
-                            h3 { "Provider configuration" }
-                            if form_value.source == "tvmaze" { p { class: "hint", "TVMaze is ready to use. No API key required." } }
-                            if matches!(form_value.source.as_str(), "manual" | "batch" | "web") { p { class: "hint", "Configure titles, templates or a guide URL in Naming details." } }
-                            if form_value.source == "custom" {
-                                label { "API base URL" input { value: "{form_value.custom}", placeholder: "https://…",
-                                    oninput: move |e| {let mut f=form.write();f.custom=e.value();f.options.selected_id.clear();f.options.poster_override=None;f.options.season_overrides.clear();} } }
-                            }
-                            if form_value.source == "omdb" || form_value.source == "custom" {
-                                label { "API key" input { r#type: "password", value: "{form_value.key}", autocomplete: "off",
-                                    oninput: move |e| form.write().key = e.value() } }
-                            }
+                        }
+                                button {class:"primary welcome-continue",onclick:move|_|navigate.call("naming"),if busy(){"Checking…"}else{"Open workspace →"}}
+                                p {class:"hint",role:"status","{message}"}
                             }
                         }
-                            else {
-                                label {"Movie source" select {value:if form_value.source=="omdb" {"omdb"}else{"manual"},onchange:move|e|{let mut f=form.write();f.source=e.value();f.options.selected_id.clear();},option {value:"manual","Entered title and year"} option {value:"omdb","OMDb"}}}
-                                if form_value.source=="omdb" {label {"OMDb API key" input {r#type:"password",value:"{form_value.key}",oninput:move|e|form.write().key=e.value()}}}
-                            }
-                            label {"TMDB artwork API key (optional)" input {r#type:"password",value:"{form_value.options.tmdb_key}",autocomplete:"off",oninput:move|e|form.write().options.tmdb_key=e.value()}}
-                            p {class:"hint","Adds verified TMDB artwork using the matched IMDb ID. Different season orders require an explicit poster choice."}
+                    }
+                }
+                    }
+                section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Workspace details", "aria-busy":(busy() || refreshing()).to_string(),
+                    if busy() || refreshing() {workspace::PageSpinner {label:if refreshing(){"Updating preview…"}else{"Working…"}}}
+                    fieldset { disabled: busy() || confirming() || resume.read().is_some(),
+                        if cfg!(any(target_os = "android", target_os = "ios")) {
+                            ads::NativeAdSlot {}
                         }
                         section { class: "settings-group naming-group",
-                        h2 { "Naming details" }
+                        h2 { if form_value.movie { "Movie Details" } else { "TV Show Details" } }
                         label { if form_value.movie { "Movie title" } else { "Series name" }
                             input { value: "{form_value.name}", placeholder: "Enter a title", oninput: move |e| { let mut f=form.write(); f.name=e.value(); f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear(); } }
                         }
@@ -494,25 +583,9 @@ fn App() -> Element {
                                 }
                             }
                         }
-                        if matches!(form_value.source.as_str(),"tvmaze"|"omdb"|"custom") && (!form_value.movie || form_value.source=="omdb") {
-                            library_tools::MatchPicker {form,connection,busy,message}
+                        if matches!(form_value.source.as_str(),"tvmaze"|"omdb"|"custom"|"tmdb") && (!form_value.movie || form_value.source!="tvmaze") {
+                            library_tools::MatchPicker {form,connection,busy,message,onselected:move |title|connection_notice.set(onboarding::Notice::MatchSelected(title))}
                         }
-                        library_tools::NumberingOptions {form}
-                        label { "Naming format"
-                            select { value: if form_value.jellyfin { "jellyfin" } else if form_value.plex { "plex" } else { "none" },
-                                onchange: move |e| {
-                                    let value = e.value();
-                                    let mut current = form.write();
-                                    current.plex = value == "plex";
-                                    current.jellyfin = value == "jellyfin";
-                                },
-                                option { value: "none", "None" }
-                                option { value: "plex", if form_value.movie { "Plex movie naming" } else { "Plex episode naming" } }
-                                option { value: "jellyfin", "Jellyfin naming" }
-                            }
-                        }
-                        p {class:"hint",if form_value.movie {if form_value.plex || form_value.jellyfin {"Example: Movie (2020).mkv"}else{"Example: Movie.mkv"}}else if form_value.jellyfin {"Example: Series (2020) S01E01 - Pilot.mkv"}else if form_value.plex {"Example: Series (2020) - S01E01 - Pilot.mkv"}else {"Example: S01E01 - Pilot.mkv"}}
-                        library_tools::Profiles {form,message}
                         if !form_value.movie {
                             if form_value.source == "manual" {
                                 label { "Episode titles, one per line" textarea { rows: "6", value: "{form_value.titles}",
@@ -531,22 +604,6 @@ fn App() -> Element {
                         }
                         }
                         div { class: "settings-footer",
-                        button { class: "primary", disabled: busy(), onclick: move |_| {
-                            let f = form.read().clone();
-                            let c = connection.read().clone();
-                            let request = match f.request() {
-                                Ok(r) => r,
-                                Err(e) => { message.set(e.to_string()); return; }
-                            };
-                            busy.set(true); message.set("Building preview…".into()); plan.set(None); consumed.set(false);
-                            spawn(async move {
-                                match c.preview(&request).await {
-                                    Ok(p) => { plan.set(Some(p)); snapshot.set(Some((f, c))); message.set("Preview ready. Review every destination before applying.".into()); active_panel.set("posters"); }
-                                    Err(e) => message.set(format!("{e:#}")),
-                                }
-                                busy.set(false);
-                            });
-                        }, if busy() { "Working…" } else { "Build rename preview" } }
                         p {class:"hint",role:"status","{message}"}
                         }
                     }
@@ -561,10 +618,32 @@ fn App() -> Element {
                         _ => (),
                     }
                 }
-                div { class: "center-column",
+                if active_panel()=="health" {
+                    section {class:"panel health-panel","aria-label":"Library health",
+                        div {class:"preview-heading",div {p {class:"eyebrow","YOUR LIBRARY"} h2 {"Library health"}}}
+                        library_tools::HealthDashboard {connection,form,plan,busy,consumed,changed:changed || refreshing(),refreshing:refreshing()}
+                        p {class:"status",role:"status","{message}"}
+                    }
+                }
+                if active_panel()=="settings" {
+                    section {class:"panel settings-panel","aria-label":"Settings",
+                        div {class:"preview-heading",div {p {class:"eyebrow","PREFERENCES & HISTORY"} h2 {"Settings"}}}
+                        library_tools::RenameHistory {connection,form,plan,busy,message,consumed}
+                        p {class:"status",role:"status","{message}"}
+                    }
+                }
+                div { class: "center-column","aria-busy":(busy() || refreshing()).to_string(),
+                    if busy() || refreshing() {workspace::PageSpinner {label:if refreshing(){"Updating library…"}else{"Working…"}}}
                 section { class: "panel preview", id: "rename-preview",
-                    library_tools::HistoryHealth {connection,form,plan,busy,message,consumed,changed}
-                    div { class: "preview-heading", h2 { "Review & rename" } span { class: "badge", "{ready} ready" } }
+                    div { class: "preview-heading library-heading",
+                        div {p {class:"eyebrow","YOUR WORKSPACE"} h2 { "Media library" }}
+                        div {class:"library-heading-actions",span {class:"badge","{ready} ready to rename"} workspace::LibraryTabs {active:active_panel}}
+                    }
+                    div {class:"library-search-tools",
+                    div {class:"library-search",workspace::Icon {name:"search"} input {r#type:"search",value:"{search}",placeholder:"Search files…","aria-label":"Search library files",oninput:move|e|search.set(e.value())}}
+                        button {class:"library-ordering-button",r#type:"button",title:"Ordering settings","aria-label":"Open ordering settings","aria-haspopup":"dialog","aria-controls":"ordering-dialog",disabled:busy() || confirming() || resume.read().is_some(),onclick:move |_|show_ordering.set(true),workspace::Icon {name:"ordering"}}
+                    }
+
                     p { class: "hint",match preview_request.options.numbering {
                         tv_manager_core::Numbering::Sequence=>"Files are paired in natural filename order. Review carefully if episodes are missing.",
                         tv_manager_core::Numbering::Detected=>"Episode numbers are read from filenames. Custom mappings take precedence. Review every match.",
@@ -572,10 +651,10 @@ fn App() -> Element {
                     }}
                     p { role: "status", class: "status", "{message}" }
                     if !persistence_error().is_empty() { p { role: "alert", class: "notice", "{persistence_error}" } }
-                    if changed { p { class: "notice", "Settings changed. Build a new preview before applying." } }
+                    if changed { p { class: "notice", "Settings changed. The preview refreshes automatically before applying." } }
                     if conflict { p { class: "notice", "Resolve destination conflicts, then build a new preview." } }
                     if groups.is_empty() {
-                        div { class: "empty", h3 { "Your next chapter starts here" } p { "Connect a folder and build a preview to see proposed filenames." } }
+                        div { class: "empty",workspace::Icon {name:"library"} h3 { "A little order. A better library." } p { "Enter your details in Workspace to refresh the library preview automatically. Review every change before applying." } button {class:"primary",onclick:move|_|navigate.call("naming"),"Open Workspace"} }
                     } else {
                         for group in &groups {
                         details { class: "season-group", open: true, key: "{group.title(preview_request.movie)}",
@@ -587,7 +666,10 @@ fn App() -> Element {
                             thead { tr { th { "Current file" } th { "Proposed filename" } th { "Status" } th { class: "actions-heading", "Actions" } } }
                             tbody {
                                 for (index, row) in group.rows.iter().cloned() {
-                                    tr { key: "{index}",
+                                    if search().is_empty() || format!("{} {}",row.source.display(),row.target.display()).to_lowercase().contains(&search().to_lowercase()) {
+                                    tr { key: "{index}",class:if selected()==Some(index){"media-row selected"}else{"media-row"},tabindex:if row.directory {"-1"}else{"0"},"aria-selected":(selected()==Some(index)).to_string(),
+                                        onclick:move|_|{if !row.directory {selected.set(Some(index));active_panel.set("inspector");}},
+                                        onkeydown:move|e|{if !row.directory && (e.key()==Key::Enter || e.key()==Key::Character(" ".into())){e.prevent_default();selected.set(Some(index));active_panel.set("inspector");}},
                                         td { title: "{row.source.display()}", "{row.source.file_name().unwrap_or_default().to_string_lossy()}" }
                                         td { title: "{row.target.display()}", "{row.target.file_name().unwrap_or_default().to_string_lossy()}" }
                                         td { span { class: if matches!(row.status, TaskStatus::Conflict | TaskStatus::Failed) { "error" } else { "" }, "{row.status:?}" }
@@ -596,32 +678,14 @@ fn App() -> Element {
                                         td { class: "file-actions",
                                             if !row.directory {
                                                 button { r#type: "button", class: "row-action", title: "Edit proposed filename", "aria-label": "Edit proposed filename",
-                                                    disabled: busy() || changed || consumed(), onclick: move |_| {
-                                                        if let Some(p) = plan.read().as_ref() {
-                                                            edit_name.set(p.tasks[index].target.file_name().unwrap_or_default().to_string_lossy().into());
-                                                            edit_error.set(String::new()); editing.set(Some(index));
-                                                        }
-                                                    },
+                                                    disabled: busy() || changed || consumed(), onclick: move |e| {e.stop_propagation();selected.set(Some(index));active_panel.set("inspector");},
                                                     svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8",
                                                         path { d: "m16 3 5 5-12 12-6 1 1-6L16 3Z" } path { d: "m13 6 5 5" }
                                                     }
                                                 }
-                                                button { r#type: "button", class: "row-action", title: "Play media file", "aria-label": "Play media file",
+                                                button { r#type: "button", class: "row-action", title: "Preview media file", "aria-label": "Preview media file",
                                                     disabled: busy() || changed || !tv_manager_core::rename::is_video(&row.source),
-                                                    onclick: move |_| {
-                                                        let Some(p) = plan.read().clone() else { return; };
-                                                        let c = snapshot.read().as_ref().map(|(_, c)| c.clone()).unwrap_or_else(|| connection.read().clone());
-                                                        let title = p.tasks[index].source.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                                        busy.set(true); message.set("Opening media player…".into()); playback_error.set(String::new());
-                                                        spawn(async move {
-                                                            match c.play(p, index).await {
-                                                                Ok(Some(url)) => { playback.set(Some((title, url))); message.set("Remote player opened.".into()); }
-                                                                Ok(None) => message.set("Opened in your default media player.".into()),
-                                                                Err(e) => message.set(format!("Could not play media: {e:#}")),
-                                                            }
-                                                            busy.set(false);
-                                                        });
-                                                    },
+                                                    onclick: move |e| {e.stop_propagation();selected.set(Some(index));active_panel.set("inspector");},
                                                     svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8",
                                                         path { d: "m8 4 12 8-12 8V4Z" }
                                                     }
@@ -629,6 +693,7 @@ fn App() -> Element {
                                             } else { span { class: "hint", "—" } }
                                         }
                                     }
+                                }
                                 }
                                 for episode in &group.missing {
                                     tr { class: "missing-row", key: "missing-{episode.season}-{episode.number}",
@@ -659,7 +724,7 @@ fn App() -> Element {
                         }
                     }
                 }
-            footer { class: "apply-bar", role: "toolbar", "aria-label": "Library actions",
+            if plan.read().is_some() { footer { class: "apply-bar", role: "toolbar", "aria-label": "Library actions",
                 div {
                     strong { "{ready} renames · {poster_count} poster downloads ready" }
                     p { class: "hint", "Review before applying. Rename history keeps original names for Undo." }
@@ -667,12 +732,12 @@ fn App() -> Element {
                 div { class: "apply-actions",
                     button { class: "secondary single-column-only", r#type: "button", "aria-controls": "poster-naming-settings", onclick: move |_| active_panel.set("posters"), "← Back" }
                     button { class: "primary", disabled: !can_apply, onclick: move |_| confirming.set(true),
-                        if poster_count > 0 { "Apply renames & posters" } else { "Rename {ready} files" }
+                        if poster_count > 0 { "Apply renames & posters" } else if ready==1 {"Rename 1 file"} else { "Rename {ready} files" }
                     }
                 }
-            }
+            } }
                 }
-                div { class: "resize-handle right-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize posters", "aria-controls": "poster-naming-settings",
+                div { class: "resize-handle right-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize preview sidebar", "aria-controls": "media-inspector-sidebar",
                     "aria-valuemin": "260", "aria-valuemax": "480", "aria-valuenow": "{right_width}",
                     onpointerdown: move |e| { e.prevent_default(); drag.set(Some(PanelDrag { right: true, x: e.client_coordinates().x, width: right_width() })); },
                     ondoubleclick: move |_| right_width.set(300.0),
@@ -682,87 +747,73 @@ fn App() -> Element {
                         _ => (),
                     }
                 }
-                section { class: "panel controls right-panel", id: "poster-naming-settings", "aria-label": "Show and season posters",
-                    fieldset { disabled: busy() || confirming() || resume.read().is_some() || editing().is_some(),
+                section { class: "panel controls right-panel", id: "media-inspector-sidebar", "aria-label": "File preview and title editing",
+                    if active_panel()=="posters" {
+                        poster::PosterInspector {selection:selected_artwork,inventory:artwork_inventory,plan,connection,busy}
+                    } else {
+                        workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:changed || consumed() || confirming(),busy,message}
+                    }
+                }
+                section { class: "panel controls artwork-panel", id: "poster-naming-settings", "aria-label": "Artwork settings and preview",
+                    div {class:"artwork-content",
+                    div {class:"preview-heading library-heading",
+                        div {p {class:"eyebrow","YOUR WORKSPACE"} h2 {"Art work"}}
+                        workspace::LibraryTabs {active:active_panel}
+                    }
+                    fieldset { disabled: busy() || confirming() || resume.read().is_some(),
                         section { class: "poster-box", "aria-label": "Show and season posters",
-                            poster::PosterCarousel { key: "{preview_show.name}-{preview_request.season:?}-{artwork_stale}", posters: carousel_posters }
+                            library_tools::ArtworkPicker {form,connection,plan,inventory:artwork_inventory,selection:selected_artwork,stale:artwork_stale,active:active_panel}
                             if plan.read().is_none() || artwork_stale {
-                                p { class: "hint", "Find a show with Build rename preview to load its artwork." }
+                                p { class: "hint", "Enter a title in Workspace to load its artwork automatically." }
                             } else if artwork.poster.is_none() && artwork.seasons.is_empty() {
                                 p { class: "hint", "No posters available from this source." }
                             }
                             if !artwork_stale && !seasons.is_empty() && seasons.iter().any(|season| !artwork.seasons.contains_key(season)) {
                                 p { class: "hint", "The selected provider has no poster for some seasons. Those seasons display a placeholder." }
                             }
-                            div { class: "poster-download-option",
-                                label { class: "check", input { r#type: "checkbox", checked: form_value.download_posters,
-                                    onchange: move |e| form.write().download_posters = e.checked() } "Download posters" }
-                                button { r#type: "button", class: "icon-button info-button", title: "About poster downloads",
-                                    "aria-label": "About poster downloads", "aria-expanded": show_poster_help().to_string(),
-                                    "aria-controls": "poster-download-help", onclick: move |_| show_poster_help.toggle(),
-                                    "ⓘ"
-                                }
-                            }
-                            if show_poster_help() {
-                                p { id: "poster-download-help", class: "hint poster-help", "Save available posters when applying the preview. Existing images are kept." }
-                            }
                             if matches!(preview_request.source, Source::TvMaze) && artwork.poster.is_some() {
                                 a { class: "poster-credit", href: "https://www.tvmaze.com", target: "_blank", rel: "noopener noreferrer", "Artwork via TVMaze" }
                             }
                         }
                     }
-                    library_tools::ArtworkPicker {form,connection,plan,snapshot,busy,message}
                     if cfg!(any(target_os = "android", target_os = "ios")) {
-                        ads::NativeAdSlot { posters: true }
+                        div {class:"poster-ad",ads::NativeAdSlot { posters: true }}
                     }
-                    nav { class: "poster-navigation single-column-only", "aria-label": "Preview steps",
-                        button { class: "secondary", r#type: "button", disabled: busy() || confirming(), "aria-controls": "library-settings", onclick: move |_| active_panel.set("settings"), "← Back" }
-                        button { class: "primary", r#type: "button", disabled: busy() || confirming(), "aria-controls": "rename-preview", onclick: move |_| active_panel.set("preview"), "Next →" }
+
                     }
-                }
-            }
-            if drag().is_some() {
-                div { class: "resize-capture", onpointerleave: move |_| drag.set(None) }
-            }
-            if let Some(index) = editing() {
-                div { class: "overlay",
-                    section { class: "dialog panel", role: "dialog", "aria-modal": "true", "aria-labelledby": "edit-file-title",
-                        h2 { id: "edit-file-title", "Edit proposed filename" }
-                        p { "This changes the preview. The file is renamed when you apply it." }
-                        label { "Filename (keep the extension)" input { value: "{edit_name}", autofocus: true, disabled: busy(),
-                            oninput: move |e| edit_name.set(e.value()) } }
-                        if !edit_error().is_empty() { p { role: "alert", class: "error", "{edit_error}" } }
-                        div { class: "pair",
-                            button { class: "secondary", disabled: busy(), onclick: move |_| editing.set(None), "Cancel" }
-                            button { class: "primary", disabled: busy(), onclick: move |_| {
-                                let Some(p) = plan.read().clone() else { return; };
-                                let c = snapshot.read().as_ref().map(|(_, c)| c.clone()).unwrap_or_else(|| connection.read().clone());
-                                let filename = edit_name().trim().to_string();
-                                busy.set(true); edit_error.set(String::new());
+                    footer {class:"apply-bar artwork-download-bar",role:"toolbar","aria-label":"Artwork downloads",
+                        div {
+                            strong {{format!("{} posters available to download",artwork_inventory.read().iter().filter(|p|p.local_path.is_none() && p.provider.is_some()).count())}}
+                            p {class:"hint","Downloads missing show and season posters. Existing images are kept."}
+                            p {class:"status",role:"status","{message}"}
+                        }
+                        div {class:"apply-actions",
+                            button {class:"primary",disabled:busy() || refreshing() || changed || consumed() || confirming() || plan.read().is_none() || !artwork_inventory.read().iter().any(|p|p.local_path.is_none() && p.provider.is_some()),onclick:move |_|{
+                                let Some(p)=plan() else{return;};let c=connection();
+                                busy.set(true);downloading_posters.set(true);message.set("Downloading posters…".into());
                                 spawn(async move {
-                                    match c.edit(p, index, filename).await {
-                                        Ok(p) => { plan.set(Some(p)); editing.set(None); message.set("Proposed filename updated. Review the preview before applying.".into()); }
-                                        Err(e) => edit_error.set(format!("{e:#}")),
+                                    match c.download_artwork(p).await {
+                                        Ok(result)=>{
+                                            if let Some(current)=selected_artwork() {
+                                                if let Some(slot)=result.posters.iter().find(|s|s.id==current.slot.id).cloned(){selected_artwork.set(Some(poster::Selection {slot,url:current.url}));}
+                                            }
+                                            artwork_inventory.set(result.posters);
+                                            message.set(format!("{} posters downloaded; {} existing kept; {} failed.{}",result.downloaded,result.kept,result.failures.len(),result.failures.first().map(|e|format!(" {e}")).unwrap_or_default()));
+                                        }
+                                        Err(error)=>message.set(format!("Poster downloads failed: {error:#}")),
                                     }
-                                    busy.set(false);
+                                    downloading_posters.set(false);busy.set(false);
                                 });
-                            }, if busy() { "Saving…" } else { "Save filename" } }
+                            },if downloading_posters(){"Downloading posters…"}else{"Download all posters"}}
                         }
                     }
+                    if downloading_posters(){workspace::PageSpinner {label:"Downloading posters…"}}
+
                 }
             }
-            if let Some((title, url)) = active_playback {
-                div { class: "overlay",
-                    section { class: "dialog panel playback-dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "playback-title",
-                        h2 { id: "playback-title", "{title}" }
-                        video { src: "{url}", controls: true, autoplay: true, playsinline: true, preload: "metadata",
-                            onerror: move |_| playback_error.set("This device cannot play this format or the stream is unavailable. Use a compatible player, or refresh the preview if the link expired.".into()) }
-                        if !playback_error().is_empty() { p { role: "alert", class: "error", "{playback_error}" } }
-                        p { class: "hint", "Remote playback uses a temporary link. Codec support depends on your device." }
-                        label { "Stream link (for a compatible player)" input { readonly: true, value: "{url}" } }
-                        button { class: "primary", onclick: move |_| playback.set(None), "Close player" }
-                    }
-                }
+            if show_ordering() {library_tools::OrderingPopup {form,message,disabled:busy() || confirming(),onclose:move |_|show_ordering.set(false)}}
+            if drag().is_some() {
+                div { class: "resize-capture", onpointerleave: move |_| drag.set(None) }
             }
             if let Some(previous) = pending_resume {
                 div { class: "overlay",
@@ -773,7 +824,7 @@ fn App() -> Element {
                             strong { if previous.form.name.is_empty() { "Previous workspace" } else { "{previous.form.name}" } }
                             small { if previous.connection.remote { "Remote library: {previous.connection.url}" } else { "Library: {previous.connection.root}" } }
                         }
-                        p { class: "hint", "Your file preview will be refreshed. Renames and poster downloads still require you to apply the preview." }
+                        p { class: "hint", "Your connection will be checked before opening the workspace. Workspace refreshes the preview automatically; renames still require confirmation." }
                         if previous.credentials_omitted { p { class: "hint", "API keys and server tokens need to be entered again on this platform." } }
                         div { class: "pair",
                             button { class: "secondary", onclick: move |_| {
@@ -790,19 +841,7 @@ fn App() -> Element {
                                 resume.set(None); persistence_ready.set(true);
                                 message.set(if previous.credentials_omitted { "Settings restored. Enter your API key or server token again to rebuild the preview.".into() }
                                     else { "Previous workspace settings restored.".into() });
-                                if previous.had_preview && !previous.credentials_omitted {
-                                    if let Ok(request) = f.request() {
-                                        busy.set(true);
-                                        message.set("Settings restored. Refreshing your library preview…".into());
-                                        spawn(async move {
-                                            match c.preview(&request).await {
-                                                Ok(p) => { plan.set(Some(p)); snapshot.set(Some((f, c))); message.set("Workspace resumed and preview refreshed.".into()); active_panel.set("posters"); }
-                                                Err(e) => message.set(format!("Settings restored. Could not refresh the preview: {e:#}")),
-                                            }
-                                            busy.set(false);
-                                        });
-                                    }
-                                }
+                                active_panel.set("welcome");
                             }, "Resume workspace" }
                         }
                     }
@@ -831,7 +870,7 @@ fn App() -> Element {
                                             message.set(format!("Finished: {success} renamed, {failures} rename failures; {downloaded} posters downloaded, {poster_failures} poster failures. Review results below."));
                                             plan.set(Some(p));
                                         }
-                                        Err(e) => message.set(format!("{e:#}. Build a new preview before retrying.")),
+                                        Err(e) => message.set(format!("{e:#}. Update the details in Workspace to refresh before retrying.")),
                                     }
                                     busy.set(false);
                                 });
@@ -846,6 +885,34 @@ fn App() -> Element {
 
 #[cfg(test)]
 mod form_tests {
+    #[test]
+    fn movie_provider_settings_reach_the_shared_request() {
+        let mut form = super::Form {
+            movie: true,
+            source: "tmdb".into(),
+            ..Default::default()
+        };
+        form.options.tmdb_key = "tmdb-test-key".into();
+        assert!(
+            matches!(form.request().unwrap().source,super::Source::Tmdb {key} if key=="tmdb-test-key")
+        );
+        form.source = "custom".into();
+        form.custom = "https://movies.example/api".into();
+        form.key = "custom-key".into();
+        let request = form.request().unwrap();
+        assert!(request.movie);
+        assert!(
+            matches!(request.source,super::Source::Custom {base_url,key} if base_url=="https://movies.example/api" && key=="custom-key")
+        );
+    }
+    #[test]
+    fn legacy_download_setting_does_not_save_posters_during_renames() {
+        let form = super::Form {
+            download_posters: true,
+            ..Default::default()
+        };
+        assert!(!form.request().unwrap().download_posters);
+    }
     use super::*;
 
     #[test]

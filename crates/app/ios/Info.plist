@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>NSCameraUsageDescription</key><string>Scan a Media Manager desktop QR code to pair this device.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>Connect to your paired desktop media library on the local network.</string>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
     <key>GADApplicationIdentifier</key>

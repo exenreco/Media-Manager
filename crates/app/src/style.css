@@ -174,7 +174,7 @@ main{height:100dvh;min-height:0;overflow:hidden}
 .match-result{display:flex;align-items:center;text-align:left;gap:12px;width:100%}
 .match-result img{width:44px;height:66px;object-fit:cover;flex-shrink:0}
 .match-result small{display:block;color:#9caac1}
-.pairing-qr{display:block;width:min(100%,260px);height:auto;background:white;margin:12px 0}
+.pairing-qr{display:block;width:min(100%,420px);height:auto;background:white;image-rendering:pixelated;margin:12px 0}
 .history-item{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:12px 0;overflow-wrap:anywhere}
 .undo-confirm{padding:12px;background:#18273b;border:1px solid #67899b}
 .artwork-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;max-height:400px;overflow:auto}

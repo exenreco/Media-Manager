@@ -134,3 +134,85 @@ The local installation lives in ignored `.tools/android-sdk`, `.tools/jdk`,
 phone with `scripts/start_android_emulator.ps1 -InstallApp` from PowerShell.
 The APK is the validated x86_64 build in `.tools/mobile-validation/android-evidence`.
 These machine-local tools and binaries are not included in Git or release archives.
+
+## Camera pairing implementation and current evidence
+
+The current source replaces mobile QR-image import with native camera scanning:
+Android uses a dedicated portrait ZXing activity with a square mint guide and
+Cancel button; iOS uses AVFoundation with a square guide. Desktop QR generation
+supports an embedded certificate-verified local TLS host and configured remote
+HTTPS servers. Rust tests cover certificate rejection, one-use redemption and
+host shutdown. The normal suite has 48 passing Rust tests; the camera harness is
+opt-in and ignored in normal CI.
+
+- Android/iOS native compilation and install/launch passed on commit
+  `fcead9b729045245556d0e5f216d7dc7d6163a56` in
+  [the shared validation run](https://github.com/exenreco/Media-Manager/actions/runs/40418886642).
+- The final Android portrait activity compiled, installed and launched on commit
+  `320e3aeeb5640ef42fb95e4b7e06ad2227235c80` in
+  [the Android-only validation run](https://github.com/exenreco/Media-Manager/actions/runs/40436164285).
+- Windows/macOS/Linux desktop checks passed on the validation branch. The Windows
+  UI generated a local TLS QR for a disposable fixture library, with countdown
+  and Stop local sharing.
+- The final Android APK was installed in a separate local Android 15 Pixel 7 QA
+  emulator. The Scan button opened the portrait camera and requested permission.
+  The Cancel button returned to the app. With one-time permission and a file-backed
+  simulated camera, a valid QR was decoded, the scanner closed, HTTPS redemption
+  succeeded, and the remote server URL and masked bearer credential populated
+  automatically. This is a passed simulated-camera local pairing test.
+- Initial black/cropped feeds were resolved by a relative imagefile path, software
+  rendering, and calibrating the file camera crop. These are test-emulator settings;
+  the app does not change camera images or system trust stores on real devices.
+- Physical Android/iOS camera scans, iOS local-network prompts and a publicly hosted
+  remote pairing flow remain pending. Existing user emulator data and real media
+  were preserved. No renaming was performed in the camera test.
+
+### Reproduce the simulated-camera host
+
+Use a disposable emulator with the new APK and camera backend
+`-camera-back imagefile:.tools/mobile-validation/camera-qa/camera-input.png`
+from the repository root (the relative path avoids Windows path-space issues).
+The tested emulator used software graphics. Set these PowerShell variables:
+
+```powershell
+$env:MEDIA_MANAGER_CAMERA_HOST_IP = 'YOUR_PC_LAN_IP'
+$env:MEDIA_MANAGER_CAMERA_IMAGE = Join-Path (Get-Location) '.tools/mobile-validation/camera-qa/camera-input.png'
+cargo test -p tv-manager-app camera_pairing_fixture_host -- --ignored --nocapture
+```
+
+Create the output directory first. This opt-in helper creates a temporary one-file
+library, starts an encrypted host for five minutes, and writes its one-use QR into
+the simulated camera image. It never serves the user's library. Open Scan desktop
+QR code in the disposable emulator and grant temporary simulated-camera access.
+The helper stops automatically after five minutes. Camera framing is calibrated
+for the tested Pixel 7/API 35 imagefile backend; other configurations may need a
+different synthetic frame. Keep test images and credentials out of Git.
+
+
+## Workspace redesign validation (2026-10-26)
+
+The working source uses desktop icon navigation and a custom title bar, an inline
+video/title inspector, and an expanding bottom tool grid on narrow/mobile views.
+Native media reads are bounded, seekable, and preserve certificate validation for
+paired remote libraries. Mobile startup gets its settings directory from the
+native bridge before loading saved settings.
+
+Validation snapshot: `c098b8ab0f54baafd85150efbb45dbe1c1650203`.
+
+- [Desktop checks](https://github.com/exenreco/Media-Manager/actions/runs/40443050537)
+  passed on Windows, macOS and Linux, including 50 Rust tests and strict linting.
+- [Native mobile validation](https://github.com/exenreco/Media-Manager/actions/runs/40443050460)
+  passed Android and iOS builds, installation and launch. Bridge checks passed
+  15 JavaScript tests, including preventing ads from covering the floating tools.
+- Windows visual checks passed for automatic sample-video playback, editing a
+  proposed title without changing its extension, borderless resizing, and compact
+  navigation. Only disposable fixtures were used; no user media was renamed.
+- The final Android APK was additionally installed in the local API 35 QA
+  emulator. Menu expansion/navigation and saving a naming field to private native
+  app storage were checked; restarting the app displayed its resume prompt.
+- Physical-device/provider acceptance and iOS interaction/playback acceptance
+  remain untested. Video decoding depends on platform WebView codec support.
+
+Earlier validation attempt 40441617157 compiled both mobile apps, but its hosted
+Android emulator image download failed and its iOS launch timed out. The final
+run above passed both launch checks. These source changes are not in v0.1.4.

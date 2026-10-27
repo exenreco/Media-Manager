@@ -84,19 +84,36 @@ They persist in the app settings directory as `naming-profiles.json`.
 
 ## QR device pairing
 
-Run/configure the Media Manager server with its normal media root and bearer token,
-and expose it through HTTPS. On an already connected device, open **Pair another
-device** and generate a QR code. On the phone, import the QR image from the system
-image picker (or paste its JSON invitation), review the HTTPS server address, and
-confirm. This is QR-image import, not a live camera scanner. It avoids manually
-entering the server URL and bearer token.
+The camera/local-host flow below is in the current source; existing v0.1.4 downloads
+still use image-import pairing with a separately configured HTTPS backend.
 
-Codes expire after five minutes, can be redeemed once, and are invalidated when the
-server restarts. The QR contains a short-lived exchange code rather than the bearer
-token. Pairing grants the server's existing library permissions; rotating the server
-bearer token revokes paired clients. It does not create accounts, start a server,
-configure TLS, or open firewall ports. Mobile storage permissions remain limited to
-folders chosen through native pickers.
+On desktop, **Pair a mobile device** offers **Local network** or **Remote HTTPS server**.
+Local mode uses the selected media root and detected LAN IP (editable for multi-adapter
+PCs). **Generate pairing QR** starts an encrypted library server bound to that IP on
+an available port. Keep the desktop app open and phone on the same reachable network.
+Allow that app through the private-network firewall if needed; no firewall rules are
+changed automatically. This mode needs no public domain, certificate installation,
+Cloudflare tunnel, or separately launched backend.
+
+The QR carries its version, desktop name, HTTPS endpoint, connection mode, one-use
+five-minute code, and (for local mode) the desktop's public certificate. Private keys,
+long-lived bearer tokens, and media paths are not in the QR. The phone trusts that
+certificate only for its paired connection; system trust stores are unchanged.
+The QR disappears when its countdown expires. Generate a fresh code for another phone.
+**Stop local sharing**, closing the desktop app, or generating for a different library/IP
+stops the previous host. Paired phones lose access and need a fresh QR after restart.
+
+Remote mode uses the HTTPS URL and credentials configured under **Connect your library**.
+The remote server must already be running and reachable from the phone.
+
+On Android/iOS, press **Scan desktop QR code**, grant camera access, and align the QR
+inside the camera guide. Scanning a valid invitation automatically redeems its code
+and connects the phone. The old image-import, JSON-paste, and confirmation controls
+are replaced. Camera frames remain on the device. Cancel or a permission failure
+returns to the app; an invalid, expired, already-used, or unreachable invitation
+reports an error and requires another scan. Scanning authorizes that desktop/server's
+library permissions. Camera scans and local-network access still require device testing.
+
 
 ## Validation and next release
 
@@ -109,3 +126,52 @@ No paid tier, purchase flow, subscription, or new ad policy is introduced here.
 
 See [Mobile validation](MOBILE_VALIDATION.md) for the emulator/simulator workflow,
 launch evidence helper, disposable fixture generator, and unrun physical-device matrix.
+
+
+## Workspace and inline media preview (working source)
+
+The workspace uses a compact icon rail on desktop. Welcome, Workspace, Naming,
+Ordering, Profiles, Artwork, API, and Library health have separate
+views so configuration does not crowd the media table. Artwork settings and
+poster preview occupy the center workspace; the right sidebar stays dedicated
+to file playback and title editing. On narrow windows and
+mobile, a floating bottom capsule expands into a grid of the same tools. The
+menu and panels animate; the system reduced-motion preference disables motion.
+The desktop frame is replaced by a draggable custom title bar with minimize,
+maximize/restore, close, and resize edges.
+
+Select a file row (or press Enter/Space while it is focused) to automatically
+preview video in the right inspector. On mobile the inspector is a dedicated
+view; the Library bottom tab returns to the file table. Playback begins muted
+and exposes standard playback, seeking, sound, and fullscreen controls. Codec
+support depends on the platform WebView; unsupported files show an error.
+
+The title field below the player edits the proposed filename without removing
+its extension. Save title updates the plan and conflict checks; files change
+only after the existing rename confirmation. Selecting another file replaces
+the previous stream and title field. Configuration changes still require a new
+preview before saving titles or applying renames.
+
+Playback uses opaque same-origin asset URLs. Reads are limited to 1 MiB and
+support byte ranges, rather than loading an entire video into memory. Desktop
+files are read directly; Android document providers and iOS scoped folders are
+read through the native storage bridge. Remote reads retain the connection's
+certificate validation, including QR-pinned local certificates. Bearer tokens,
+filesystem paths, and remote playback tickets are not placed in video URLs.
+
+
+Welcome groups connection settings in icon tabs below the setup title. Local contains the
+media folder and subfolder controls. Remote contains the HTTPS server settings,
+subfolder, and QR pairing controls. Connection setup and pairing are no longer separate workspace navigation
+items. To share a desktop folder over the local network, choose the folder under
+Local first and generate its QR under Remote. Switching tabs retains the local
+sharing host until Stop local sharing is pressed or the app closes.
+
+
+Welcome is the first view after the splash. Open workspace and workspace navigation
+validate access before entering: desktop folders must exist and be readable;
+mobile folders must retain their native permission; remote servers must answer
+an authenticated Media Manager health request within eight seconds. These checks
+do not scan media or fetch metadata. A missing connection shows a top-center,
+expanding capsule with an explicit setup confirmation. Saved settings are restored
+on Welcome; a fresh preview is built after entering the workspace.
