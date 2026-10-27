@@ -17,17 +17,17 @@ controlling a library from another device.
 - TV-show and movie modes, optional season selection, Plex/Jellyfin naming and custom templates.
 - Season tables with missing episodes, filename edits and media playback.
 - Show/season poster previews and optional downloads that preserve existing images.
-- Resizable desktop panels; Back/Next steps guide single-column windows through settings, posters and preview.
+- Working source: icon rail, custom desktop title bar, inline video/title inspector, and an expanding mobile tool menu.
 - Local libraries or an authenticated remote library server.
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.
 
-Version 0.1.4 includes title-match selection, anime absolute
+Version 1.0.0-beta includes title-match selection, anime absolute
 numbering and explicit episode mappings, companion-file renaming, durable rename
 history and Undo, alternate TVMaze/TMDB artwork, preview health scans, saved naming
 profiles, and single-use QR pairing with a remote server. See
 [Library tools](docs/LIBRARY_TOOLS.md) for setup and limits, and
-[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v0.1.4 previews.
+[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v1.0.0-beta previews.
 
 ## Platform status and downloads
 
@@ -36,9 +36,9 @@ build is not a substitute for native UI and device testing.
 
 | Platform | Release artifact | Current limits |
 | --- | --- | --- |
-| Windows x64 | Portable ZIP, app and server | Requires Windows native prerequisites and WebView2 |
-| macOS Apple Silicon / Intel | ZIP with app bundle and server | Ad-hoc signed; not Developer ID signed or notarized |
-| Linux x64 | Flatpak with managed runtime, or TAR.GZ | Flatpak uses GNOME 49 GTK/WebKitGTK; TAR.GZ requires host libraries |
+| Windows x64 | Setup EXE and portable ZIP | Setup installs WebView2 if missing; publisher signing depends on release configuration |
+| macOS Apple Silicon / Intel | PKG installer and portable ZIP | Ad-hoc signed app; installer is not Developer ID signed or notarized |
+| Linux x64 | DEB, Flatpak with managed runtime, or TAR.GZ | DEB targets Ubuntu 24.04+ compatible systems; Flatpak supplies GTK/WebKitGTK |
 | Android ARM64 | Installable debug-signed preview APK | Test ads; new native folder access awaits device validation; background execution pending |
 | iOS ARM64 Simulator | Simulator app ZIP | For Xcode Simulator, not an installable iPhone IPA; device signing remains pending |
 
@@ -46,12 +46,16 @@ The tag-triggered [release workflow](.github/workflows/release.yml) builds each
 platform on its native host and attaches successful artifacts and SHA-256 checksums
 to a GitHub prerelease. Assets appear as jobs finish. A missing asset means that
 platform job has not completed successfully; check Actions before downloading.
-The v0.1.4 source and mobile previews include Android document-tree selection and
+The v1.0.0-beta source and mobile previews include Android document-tree selection and
 iOS security-scoped folder selection for local previews, renaming, posters and
 playback. Both mobile integrations have compiled in native CI; device/provider
 validation is still pending. Mobile background jobs and notifications remain unfinished.
 
-Download the [v0.1.4 previews](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.4).
+Download the [v1.0.0-beta previews](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0-beta).
+
+The beta release includes Windows setup, macOS PKG and Linux DEB installers
+alongside portable downloads and the managed Linux Flatpak. See [desktop installation](docs/INSTALLATION.md)
+for setup, upgrade, removal, and runtime requirements.
 Platform assets and checksums appear as their native CI jobs finish. Mobile device
 acceptance tests and production/store signing are still pending.
 
@@ -135,7 +139,8 @@ python -m unittest discover -s crates/app/ios/tests
 
 Native rename tests use temporary libraries, not your media. The live TVMaze test
 and desktop notification smoke test are opt-in and ignored during normal CI.
-The Windows build and 46 routine Rust tests have passed locally. Cross-platform
+Rust workspace tests and native desktop/mobile packaging checks have passed;
+see the validation documents for exact coverage and remaining acceptance checks. Cross-platform
 build results are recorded in [GitHub Actions](https://github.com/exenreco/Media-Manager/actions).
 
 ## Repository layout

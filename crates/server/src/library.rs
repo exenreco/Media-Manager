@@ -144,3 +144,93 @@ pub async fn redeem(
     }
     Ok(Json(serde_json::json!({"token":state.token.as_str()})))
 }
+
+fn artwork_plan(state: &AppState, id: Uuid) -> Result<RenamePlan, ApiError> {
+    state
+        .plans
+        .lock()
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Plan store unavailable"))?
+        .get(&id)
+        .filter(|(created, _)| created.elapsed() < Duration::from_secs(900))
+        .map(|(_, plan)| plan.clone())
+        .ok_or_else(|| {
+            error(
+                StatusCode::NOT_FOUND,
+                "Preview expired; update Workspace details",
+            )
+        })
+}
+pub async fn artwork(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<tv_manager_core::artwork::Poster>>, ApiError> {
+    authenticate(&state, &headers)?;
+    let plan = artwork_plan(&state, id)?;
+    tokio::task::spawn_blocking(move || tv_manager_core::artwork::inventory(&plan))
+        .await
+        .map_err(|_| {
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Artwork read interrupted",
+            )
+        })?
+        .map(Json)
+        .map_err(|e| error(StatusCode::BAD_REQUEST, e))
+}
+pub async fn save_artwork(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(save): Json<tv_manager_core::artwork::Save>,
+) -> Result<Json<Vec<tv_manager_core::artwork::Poster>>, ApiError> {
+    authenticate(&state, &headers)?;
+    let plan = artwork_plan(&state, id)?;
+    let permit = state
+        .gate
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| error(StatusCode::CONFLICT, "Another file operation is running"))?;
+    tv_manager_core::artwork::validate_save(&plan, &save)
+        .map_err(|e| error(StatusCode::BAD_REQUEST, e))?;
+    let bytes = tv_manager_core::artwork::fetch(&save.url)
+        .await
+        .map_err(|e| error(StatusCode::BAD_REQUEST, e))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        tv_manager_core::artwork::write(&plan, &save, &bytes)?;
+        tv_manager_core::artwork::inventory(&plan)
+    })
+    .await
+    .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Poster save interrupted"))?
+    .map(Json)
+    .map_err(|e| error(StatusCode::CONFLICT, e))
+}
+
+pub async fn download_artwork(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<tv_manager_core::artwork::Batch>, ApiError> {
+    authenticate(&state, &headers)?;
+    let plan = artwork_plan(&state, id)?;
+    let permit = state
+        .gate
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| error(StatusCode::CONFLICT, "Another file operation is running"))?;
+    // Keep the operation alive if a mobile client disconnects mid-download.
+    tokio::spawn(async move {
+        let _permit = permit;
+        tv_manager_core::artwork::download_missing(&plan).await
+    })
+    .await
+    .map_err(|_| {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Poster download interrupted",
+        )
+    })?
+    .map(Json)
+    .map_err(|e| error(StatusCode::BAD_REQUEST, e))
+}

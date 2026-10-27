@@ -1,43 +1,43 @@
-# Media Manager v0.1.4 preview
+# Media Manager 1.0.0 beta
 
 ## Changes
 
-- Added title-match selection, optional premiere-year search, and alternate TVMaze/TMDB posters.
-- Added anime absolute numbering, detected episode numbers, and explicit episode mappings.
-- Rename companion subtitles, audio and NFO files alongside media.
-- Persistent rename history and explicit Undo for completed operations.
-- Preview health scans, including SHA-256 exact duplicate detection.
-- Saved naming profiles and single-use QR pairing with the remote server.
-- Working splash progress and None/Plex/Jellyfin naming selection.
-- Fixed iOS Simulator installation by packaging static Google SDK resources without embedding static archives as executable frameworks.
-- Added automated Android/iOS install-and-launch validation and a local Android emulator launcher.
+- Redesigned desktop workspace with an icon rail, custom title bar, resizable media inspector and inline video preview/title editing.
+- Updated Android and iOS layouts with larger readable text, safe-area spacing and animated bottom navigation.
+- Added Get Started connection setup, Local/Remote tabs, API settings and connection checks before entering the workspace.
+- Details changes refresh the rename preview automatically. Ordering and saved profiles are available from the Library ordering popup.
+- Combined Library and Art Work views, with searchable/sortable responsive poster grids, local artwork inventory, side-by-side replacement previews and explicit single/bulk poster downloads.
+- Added automatic library health scans and charts; rename history and explicit Undo are on Settings.
+- Added TMDB movie matching and TMDB-compatible custom movie providers, including optional year filtering.
+- Added camera-based single-use QR pairing with authenticated local HTTPS sharing and pinned server certificates.
+- Added Windows setup, macOS PKG and Debian/Ubuntu DEB installers while retaining portable archives and Linux Flatpak.
 
 ## Downloads
 
-Native release jobs attach platform assets and SHA-256 checksums as they finish:
+Platform jobs attach assets and SHA-256 checksums as they finish:
 
-- Windows x64 portable ZIP with app and optional server.
-- macOS Apple Silicon and Intel ZIPs with app bundle and optional server.
-- Linux x64 TAR.GZ and Flatpak using a managed GTK/WebKitGTK runtime.
-- Android ARM64 debug-signed preview APK with test ads.
-- iOS ARM64 **Simulator-only** app ZIP, for Xcode on a Mac. This is not an iPhone IPA.
+- Windows x64 setup EXE and portable ZIP, including the optional server. Setup installs WebView2 if missing.
+- macOS Apple Silicon and Intel PKG installers and portable ZIPs, including the optional server.
+- Linux x64 DEB for Ubuntu 24.04-compatible systems, TAR.GZ and Flatpak with managed GTK/WebKitGTK runtime.
+- Android ARM64 debug-signed beta APK with Google test ads.
+- iOS ARM64 **Simulator-only** ZIP for Xcode on a Mac; this is not an installable iPhone IPA.
 
 ## Validation and limits
 
-Rust tests and native bridge/packaging checks passed. Android and iOS installed,
-launched and survived the startup check in hosted emulators/simulators. Android
-also installed and launched in a local Windows Android 15 emulator with WHPX.
-The iOS screenshot showed a test ad with no native-ad validator issues. Android
-ad delivery remains unresolved (SDK/advertising privacy-check errors observed).
-These startup checks do not replace full feature or physical-device acceptance.
+Native installer validation passed Windows install/upgrade/startup/uninstall,
+installation/reinstall on both Mac architectures, and Linux dependency installation,
+launcher/startup/removal. Android and iOS builds and simulator startup passed on
+preceding design snapshots; the final beta release is rebuilt from its tag.
+Physical-device and full provider acceptance remain pending. Android advertising
+privacy checks/ad delivery remain unresolved. No live TMDB account test was made.
 
-Mobile background execution and notifications remain unfinished. Android previews
-are debug-signed. macOS bundles are ad-hoc signed and not notarized. Publicly
-trusted Windows signing requires configured publisher credentials; self-signed
-internal builds do not establish public trust. Linux Flatpak uses GNOME 49;
-the TAR.GZ requires compatible host libraries.
+Windows publisher signing requires configured credentials. macOS apps are ad-hoc
+signed; PKGs are not Developer ID signed or notarized. Android uses a CI debug key;
+iOS device distribution requires Apple provisioning. Mobile background execution
+and notifications remain unfinished. Linux DEB/TAR.GZ use compatible host libraries;
+Flatpak supplies a managed GNOME 49 runtime.
 
-Renames affect real files and can partially succeed. Review destinations before
-applying; use recorded history for explicit Undo and inspect its results.
-Original code is Apache 2.0 licensed. Third-party dependencies, SDKs and provider
-data retain their own terms. See README and docs/MOBILE_VALIDATION.md.
+Renames require confirmation and can partially succeed. Review destinations and
+inspect recorded Undo results. Poster replacement requires explicit consent.
+Original code is Apache 2.0 licensed; dependencies, SDKs and provider data retain
+their own terms. See README and the installation/mobile validation documentation.

@@ -5,7 +5,7 @@ It is an initial migration milestone, **not a completed five-platform release**.
 
 ## Architecture
 
-- `crates/core`: shared models, TVMaze/OMDb/custom metadata clients, guide parsing,
+- `crates/core`: shared models, TVMaze/TMDB/OMDb/custom metadata clients, guide parsing,
   natural file ordering, manual titles, batch templates, movie naming, all-season
   matching, missing episode reporting, rename previews, and Plex folder naming.
 - `crates/app`: Dioxus 0.7 Rust UI with responsive CSS and local/remote backends.
@@ -24,12 +24,13 @@ It is an initial migration milestone, **not a completed five-platform release**.
 | Android | Native document-tree bridge in source | Implemented in shared source | ARM64 preview APK built in CI; device acceptance pending |
 | iOS | Native security-scoped folder bridge in source | Implemented in shared source | ARM64 Simulator archive built/signed in CI; device signing/testing pending |
 
-For local mobile libraries, select **This device**, then **Choose media folder**.
+For local mobile libraries, open **Welcome → Local**, then **Choose media folder**.
 Android opens the system document-tree picker and keeps the granted permission.
 iOS opens Files and saves a bookmark for the selected folder. Select a folder
 again if access is revoked. Preview scans names without copying media, and
-native provider operations apply the reviewed renames. Playback uses an Android
-video player or iOS Quick Look. Poster writes preserve existing images.
+native provider operations apply the reviewed renames. The current working source
+streams local and remote media into the built-in preview player. Older releases
+use an Android video player or iOS Quick Look. Poster writes preserve existing images.
 
 Android restricts which roots can be selected (including Android/data and
 Android/obb); choose a media subfolder rather than the storage root. Provider
@@ -58,10 +59,12 @@ cargo run -p tv-manager-app
 ```
 
 Choose a media root, optionally enter a subfolder, set the title and episode
-source, build a preview, inspect the mapping and apply the plan. Pairing follows
+source in Workspace. The preview refreshes automatically after a short pause in
+edits; inspect the mapping in Library and apply the plan. Pairing follows
 natural filename order; it does not infer missing episode numbers from filenames.
 Single-season API results retain their original episode numbers, including gaps.
-Movie title/year are entered manually, matching the original app's movie flow.
+Movie titles and optional years can be entered manually or matched using TMDB,
+OMDb, or a TMDB-compatible custom provider.
 
 Show previews are grouped into collapsible season sections in numeric order.
 The season field is optional: leave it blank to include all seasons from folder
@@ -72,47 +75,81 @@ with no matching files. Files without a detected season appear in an
 "Unassigned files" section. Movies remain in one section. Rebuild the server
 alongside the app when upgrading so remote previews include season metadata.
 
-Each season table includes an **Actions** column. The pencil edits a file's
-proposed filename; it does not rename immediately. The extension is preserved,
-invalid/path filenames are rejected, and collisions are recalculated for the
-whole preview. Edited names use the normal confirmation flow. Edits belong to
-the current preview and are not saved as reusable settings. The play icon opens
-local videos in the system's default player. Remote videos open in an in-app
-player using a temporary streaming link with seek support; MP4/MKV/AVI decoding
-depends on device codec support. Copy the link into a compatible network player
-if needed. Playback follows applied file and Plex folder renames. Folders and
-missing files have no actions; text files can be edited but cannot be played.
-Build a fresh preview to edit after applying.
+Each season table includes an **Actions** column. In the current working source,
+click a row, pencil, or play icon to select a file. The right inspector automatically
+plays supported videos, initially muted. The title field below the player updates
+the proposed filename while keeping its extension. **Save title** recalculates
+conflicts; the file is changed only after applying the rename plan. Folders and
+missing files have no edit/play actions. Non-video companions can be edited but
+have no video preview. Decoder support depends on the platform WebView.
+
+## Workspace navigation (working source)
+
+Desktop uses a custom draggable title bar, with minimize, maximize/restore, close,
+and resize edges. A global TV Shows / Movies toggle sits in the title bar before
+the window controls and applies across all workspace pages. The icon rail expands on hover or keyboard focus. Its views are
+Get Started, Details, Library, Health, and Settings. The ordering icon beside the Library search bar opens a popup containing naming
+format, numbering, custom episode mapping, companion-file settings, and saved
+naming profiles. Profiles appear below custom episode mapping. Configuration occupies the main area only when that view is selected.
+Welcome appears after the splash and contains an API settings panel above the
+Local/Remote connection tabs. Open workspace leads to TV Show Details or Movie
+Details, depending on the active type. Changes refresh the preview asynchronously
+without leaving the page; superseded requests are cancelled.
+Local contains folder settings; Remote contains server settings and QR pairing.
+Open workspace verifies access first. Missing or invalid connections show a
+top-center animated confirmation notice with Set up connection and Not now.
+Workspace tools are not opened until connection validation succeeds.
+Library contains **Library** and **Art Work** tabs. Library keeps the media
+table; Art Work contains a search bar and responsive grid of main, season, and
+alternate posters, alongside download settings and poster destination controls.
+The tabs sit above the page heading; Art Work displays the heading “Art work”. Artwork has no separate navigation item. The right
+inspector opens only when a media item is selected and contains file playback
+and title editing; drag its
+divider, use arrow keys while the divider is focused, or double-click to reset it.
+The rename toolbar stays below the library table.
+
+Library health opens a separate dashboard without the media table or rename
+toolbar. The current preview is scanned automatically while this page is open.
+Charts show video matching and counts of missing episodes, unmatched videos,
+filename conflicts, missing artwork, and exact duplicate groups. Results cover
+the current preview, not every folder on the device. Rename history and Undo
+controls are directly accessible on Settings, below Health in navigation.
+
+At 760 CSS pixels or narrower, a floating bottom capsule replaces the icon rail.
+Its plus button expands into a tool grid; X or Escape closes the grid. Welcome,
+Workspace and Library remain directly accessible from the capsule.
+Selecting a file opens Preview; Library returns to the table. Motion respects the
+system reduced-motion preference. These workspace changes have not been released
+in the v0.1.4 downloads.
 
 ## Poster preview and downloads
 
-The artwork box above "1. Connect your library" starts with a placeholder image.
-The dashboard has three independently scrolling columns: posters and naming on
-the left, rename previews in the center, and grouped library/API settings on the
-right. Both side panels span the full window height, with the logo, title and
-tagline inside the left panel. Main panels have square corners, and the bottom
-rename toolbar sits under the center preview, between the side panels. Drag the dividers to resize
-them, use arrow keys when a divider is focused, or double-click to reset its
-width. Widths adapt to preserve room for the preview. At window widths of
-900 CSS pixels or less, a gear icon opens a dropdown with Naming, Preview and
-Library & API options to switch between full-height panels without horizontal overflow. The rename toolbar
-stays at the bottom of the Preview panel while its table scrolls. The main and season
-posters share a carousel: previous/next icons or adjacent thumbnails change the
-active poster, which is displayed larger. The info icon beside Download posters
-toggles the saving explanation.
+The Library page’s Art Work tab lists available posters in a responsive grid.
+The search bar filters the current preview’s artwork by title or season; it does
+not perform a separate provider search. Local posters appear in color; when a
+local image is missing, its provider poster appears grayed out. Clicking a poster
+only changes the selection and opens the right sidebar, without rebuilding the
+preview. The sidebar compares existing and selected artwork side by side.
+**Save selected poster** is an explicit action; enable **Replace existing poster**
+to overwrite an existing image. A changed file blocks replacement until refreshed.
+Provider alternatives can be previewed for a show/season destination chosen
+using **Preview alternate artwork for** in the selection sidebar.
 Building a rename preview loads the show's poster and season poster thumbnails.
 Missing artwork and image-load errors retain the placeholder. TVMaze and
 TVMaze-compatible sources supply show and season artwork when available; OMDb
 supplies its show poster. Manual titles, batch sequences and scraped guides do
-not supply artwork. Movie naming remains manual and does not fetch movie posters.
+not supply artwork. Movies can use TMDB, OMDb, or a custom movie API to match titles and posters.
 The provider integration follows the [TVMaze API](https://www.tvmaze.com/api)
 and [OMDb API](https://www.omdbapi.com/) response fields.
 
-Select **Download posters**, then build a preview to review the download targets.
-Images are saved only when you confirm applying the preview, on the device or
-server that holds the library. Downloads can run even if all filenames are
-already correct. Existing posters are kept; failures appear per poster without
-undoing successful renames. The show image is saved as `poster.jpg` (or `.png` /
+Use **Save selected poster** in the sidebar to download an image to the device
+or server holding the library. Poster saving is independent of renaming; the
+Download posters checkbox has been removed. The fixed Art Work toolbar
+provides **Download all posters** to save every available missing show/season
+poster, independently of the search filter. Existing local images are kept;
+provider alternatives are not downloaded as extra duplicate files. The toolbar
+reports saved, kept, and failed counts. Existing images require explicit
+replacement confirmation. The show image is saved as `poster.jpg` (or `.png` /
 `.webp`), and season images as `poster` in their matching season folders. If a
 season folder is absent, its image is saved as `season01-poster.jpg` in the
 selected root. Selecting a season folder itself uses `show-poster` for the show
@@ -310,3 +347,28 @@ steps pass.
 
 For title matching, anime numbering, companion files, Undo, artwork sources,
 health scans, profiles, and QR pairing, see [Library tools](LIBRARY_TOOLS.md).
+
+
+## Movie metadata providers
+
+In **Get Started → API settings**, select **Movies** in the title bar, then choose
+**TMDB**, **OMDb**, **Custom movie API (TMDB-compatible)**, or manual title entry.
+TMDB requires a v3 API key. Enter it in **TMDB API key**, then use **Find matching
+titles** on Details. Searches include the optional year; selecting a card pins
+the movie ID and loads the title, release year, main poster, and available
+alternate posters. Missing images remain placeholders.
+
+Custom movie APIs use an HTTPS base URL without embedded credentials or query
+parameters. An optional key is sent as `api_key`. The contract is:
+
+- `GET {base}/search/movie?query={title}&year={optional-year}&include_adult=false`
+  returns `{"results":[{"id":123,"title":"Example","release_date":"2020-01-01","poster_path":"https://images.example/poster.jpg"}]}`.
+- `GET {base}/movie/123?append_to_response=images` returns the same movie fields,
+  optionally with `"images":{"posters":[{"file_path":"https://images.example/alternate.jpg"}]}`.
+- IDs are numeric. Image references may be full HTTPS URLs or TMDB image paths.
+  TV mode continues to use the existing TVMaze-compatible custom contract.
+
+API details: [TMDB movie search](https://developer.themoviedb.org/reference/search-movie),
+[details](https://developer.themoviedb.org/reference/movie-details), and
+[image URLs](https://developer.themoviedb.org/docs/image-basics).
+Rebuild the backend alongside the app for remote TMDB/custom movie support.

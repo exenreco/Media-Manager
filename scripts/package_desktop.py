@@ -51,7 +51,7 @@ def main():
         (contents / 'Info.plist').write_bytes(plistlib.dumps({
             'CFBundleName': 'Media Manager', 'CFBundleDisplayName': 'Media Manager',
             'CFBundleIdentifier': 'com.tvshowmanager.app', 'CFBundleExecutable': 'media-manager',
-            'CFBundlePackageType': 'APPL', 'CFBundleVersion': args.version,
+            'CFBundlePackageType': 'APPL', 'CFBundleVersion': args.version.split('-')[0],
             'CFBundleIconFile': 'app.icns',
             'CFBundleShortVersionString': args.version.split('-')[0],
             'LSMinimumSystemVersion': '13.0', 'NSHighResolutionCapable': True,

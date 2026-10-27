@@ -105,6 +105,12 @@ def platform_info(info, sdk, version):
     if sdk not in ('iphoneos', 'iphonesimulator'):
         raise ValueError('Unsupported iOS SDK')
     result = dict(info)
+    # Cargo prerelease labels are valid app versions, but Apple bundle fields
+    # require numeric versions. The release asset keeps the beta label.
+    for key in ('CFBundleVersion', 'CFBundleShortVersionString'):
+        value = result.get(key)
+        if isinstance(value, str) and re.fullmatch(r'\d+\.\d+\.\d+-[A-Za-z0-9.-]+', value):
+            result[key] = value.split('-', 1)[0]
     result['CFBundleSupportedPlatforms'] = ['iPhoneSimulator' if sdk == 'iphonesimulator' else 'iPhoneOS']
     result['DTPlatformName'] = sdk
     result['DTPlatformVersion'] = version

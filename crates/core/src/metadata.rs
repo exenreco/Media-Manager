@@ -30,7 +30,12 @@ pub async fn lookup(request: &PlanRequest, file_count: usize) -> Result<Show> {
     if request.name.trim().is_empty() {
         bail!("Enter a show or movie name");
     }
-    if request.movie && !matches!(request.source, Source::Omdb { .. }) {
+    if request.movie
+        && !matches!(
+            request.source,
+            Source::Omdb { .. } | Source::Tmdb { .. } | Source::Custom { .. }
+        )
+    {
         return Ok(Show {
             name: request.name.trim().into(),
             year: request.year,
@@ -79,7 +84,17 @@ pub async fn lookup(request: &PlanRequest, file_count: usize) -> Result<Show> {
         }
         Source::Web { url } => scrape(url, &request.name, season).await?,
         Source::TvMaze => tvmaze(request, "https://api.tvmaze.com", "").await?,
-        Source::Custom { base_url, key } => tvmaze(request, base_url, key).await?,
+        Source::Custom { base_url, key } => {
+            if request.movie {
+                movie_lookup(request, base_url, key, "Custom movie API").await?
+            } else {
+                tvmaze(request, base_url, key).await?
+            }
+        }
+        Source::Tmdb { key } => {
+            anyhow::ensure!(!key.trim().is_empty(), "Enter your TMDB API key");
+            movie_lookup(request, "https://api.themoviedb.org/3", key, "TMDB").await?
+        }
         Source::Omdb { key } => omdb(request, key).await?,
     };
     if let Some(season) = request.season {
@@ -438,9 +453,16 @@ pub async fn search(request: &PlanRequest) -> Result<Vec<crate::ShowMatch>> {
     }
     let client = client()?;
     match &request.source {
+        Source::Tmdb { key } => {
+            anyhow::ensure!(!key.trim().is_empty(), "Enter your TMDB API key");
+            movie_search(request, "https://api.themoviedb.org/3", key, "TMDB").await
+        }
+        Source::Custom { base_url, key } if request.movie => {
+            movie_search(request, base_url, key, "Custom movie API").await
+        }
         Source::TvMaze | Source::Custom { .. } => {
             if request.movie {
-                bail!("Select OMDb to search movies");
+                bail!("Choose TMDB, OMDb, or a custom movie API to search movies");
             }
             let (base, key) = match &request.source {
                 Source::Custom { base_url, key } => (base_url.as_str(), key.as_str()),
@@ -516,6 +538,152 @@ pub async fn search(request: &PlanRequest) -> Result<Vec<crate::ShowMatch>> {
         }
         _ => bail!("Choose TVMaze, OMDb, or a custom API to search for a match"),
     }
+}
+
+fn movie_url(base: &str, key: &str, path: &str) -> Result<Url> {
+    let mut url = Url::parse(base).context("Invalid movie provider base URL")?;
+    anyhow::ensure!(
+        url.scheme() == "https"
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Movie provider must use an HTTPS base URL without credentials, query, or fragment"
+    );
+    url.set_path(&format!("{}/{}", url.path().trim_end_matches('/'), path));
+    if !key.trim().is_empty() {
+        url.query_pairs_mut().append_pair("api_key", key.trim());
+    }
+    Ok(url)
+}
+fn movie_search_url(request: &PlanRequest, base: &str, key: &str) -> Result<Url> {
+    let mut url = movie_url(base, key, "search/movie")?;
+    url.query_pairs_mut()
+        .append_pair("query", request.name.trim())
+        .append_pair("include_adult", "false");
+    if let Some(year) = request.year {
+        url.query_pairs_mut().append_pair("year", &year.to_string());
+    }
+    Ok(url)
+}
+fn movie_year(item: &Value) -> Option<u32> {
+    item["release_date"].as_str()?.get(..4)?.parse().ok()
+}
+fn movie_poster(value: &Value) -> Option<String> {
+    if let Some(url) = poster_url(value) {
+        return Some(url);
+    }
+    let path = value.as_str()?;
+    (path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.contains("..")
+        && !path.contains(['?', '#', '\\']))
+    .then(|| format!("https://image.tmdb.org/t/p/original{path}"))
+}
+fn parse_movie_matches(
+    response: &Value,
+    year: Option<u32>,
+    provider: &str,
+) -> Result<Vec<crate::ShowMatch>> {
+    let results = response["results"]
+        .as_array()
+        .context("Movie provider must return a results array")?;
+    Ok(results
+        .iter()
+        .filter(|item| year.is_none() || movie_year(item) == year)
+        .filter_map(|item| {
+            Some(crate::ShowMatch {
+                id: item["id"].as_u64()?.to_string(),
+                name: item["title"].as_str()?.into(),
+                year: movie_year(item),
+                poster: movie_poster(&item["poster_path"]),
+                provider: provider.into(),
+                kind: "Movie".into(),
+            })
+        })
+        .take(30)
+        .collect())
+}
+async fn movie_search(
+    request: &PlanRequest,
+    base: &str,
+    key: &str,
+    provider: &str,
+) -> Result<Vec<crate::ShowMatch>> {
+    anyhow::ensure!(request.movie, "TMDB movie search requires Movies mode");
+    parse_movie_matches(
+        &json(&client()?, movie_search_url(request, base, key)?).await?,
+        request.year,
+        provider,
+    )
+}
+fn parse_movie_details(details: &Value, request: &PlanRequest, provider: &str) -> Result<Show> {
+    let name = details["title"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .context("Movie provider returned no title")?;
+    let year = movie_year(details);
+    anyhow::ensure!(
+        request.year.is_none() || year == request.year,
+        "Movie release year does not match the requested year"
+    );
+    let mut artwork = Artwork {
+        poster: movie_poster(&details["poster_path"]),
+        ..Default::default()
+    };
+    for (index, poster) in details["images"]["posters"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(40)
+        .enumerate()
+    {
+        if let Some(url) = movie_poster(&poster["file_path"]) {
+            artwork.alternatives.push(crate::ArtworkChoice {
+                label: format!("{provider} poster {}", index + 1),
+                url,
+                season: None,
+                provider: provider.into(),
+            });
+        }
+    }
+    Ok(Show {
+        name: name.into(),
+        year,
+        episodes: Vec::new(),
+        artwork,
+    })
+}
+async fn movie_lookup(
+    request: &PlanRequest,
+    base: &str,
+    key: &str,
+    provider: &str,
+) -> Result<Show> {
+    anyhow::ensure!(request.movie, "TMDB movie provider requires Movies mode");
+    let id = if request.options.selected_id.is_empty() {
+        movie_search(request, base, key, provider)
+            .await?
+            .first()
+            .context("No matching movie found; check the title and year")?
+            .id
+            .clone()
+    } else {
+        request.options.selected_id.clone()
+    };
+    let id = id.parse::<u64>().context("Invalid movie provider ID")?;
+    let mut url = movie_url(base, key, &format!("movie/{id}"))?;
+    url.query_pairs_mut()
+        .append_pair("append_to_response", "images");
+    let details = json(&client()?, url).await?;
+    if let Some(returned) = details["id"].as_u64() {
+        anyhow::ensure!(
+            returned == id,
+            "Movie provider returned a different movie ID"
+        );
+    }
+    parse_movie_details(&details, request, provider)
 }
 
 async fn supplement_tmdb(
@@ -690,5 +858,81 @@ mod year_search_tests {
             .unwrap()
             .query_pairs()
             .any(|(key, value)| key == "y" && value == "2005"));
+    }
+}
+
+#[cfg(test)]
+mod movie_provider_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn movie_queries_include_title_and_optional_year_for_tmdb_and_custom_bases() {
+        let mut request = PlanRequest {
+            movie: true,
+            name: "Dune & more".into(),
+            year: Some(2021),
+            ..Default::default()
+        };
+        let url = movie_search_url(&request, "https://provider.example/api/", "test-key").unwrap();
+        assert_eq!(url.path(), "/api/search/movie");
+        assert!(url
+            .query_pairs()
+            .any(|(k, v)| k == "query" && v == "Dune & more"));
+        assert!(url.query_pairs().any(|(k, v)| k == "year" && v == "2021"));
+        request.year = None;
+        assert!(
+            !movie_search_url(&request, "https://api.themoviedb.org/3", "")
+                .unwrap()
+                .query_pairs()
+                .any(|(k, _)| k == "year")
+        );
+        assert!(movie_search_url(&request, "http://provider.example/api", "").is_err());
+        assert!(
+            movie_search_url(&request, "https://user:secret@provider.example/api", "").is_err()
+        );
+    }
+    #[test]
+    fn movie_matches_filter_remakes_and_preserve_poster_urls() {
+        let response = json!({"results":[{"id":1,"title":"Dune","release_date":"1984-12-14","poster_path":"/old.jpg"},{"id":2,"title":"Dune","release_date":"2021-10-22","poster_path":"https://custom.example/new.png"}]});
+        let matches = parse_movie_matches(&response, Some(2021), "Custom movie API").unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "2");
+        assert_eq!(
+            matches[0].poster.as_deref(),
+            Some("https://custom.example/new.png")
+        );
+        assert_eq!(
+            parse_movie_matches(&response, None, "TMDB").unwrap().len(),
+            2
+        );
+    }
+    #[test]
+    fn details_provide_movie_title_year_and_alternative_posters_without_episodes() {
+        let request = PlanRequest {
+            movie: true,
+            year: Some(2021),
+            ..Default::default()
+        };
+        let details = json!({"id":2,"title":"Dune","release_date":"2021-10-22","poster_path":"/main.jpg","images":{"posters":[{"file_path":"/alternate.jpg"},{"file_path":"https://custom.example/alternate.png"}]}});
+        let show = parse_movie_details(&details, &request, "TMDB").unwrap();
+        assert_eq!(show.name, "Dune");
+        assert_eq!(show.year, Some(2021));
+        assert!(show.episodes.is_empty());
+        assert_eq!(show.artwork.alternatives.len(), 2);
+        assert_eq!(
+            show.artwork.poster.as_deref(),
+            Some("https://image.tmdb.org/t/p/original/main.jpg")
+        );
+        assert!(parse_movie_details(
+            &details,
+            &PlanRequest {
+                year: Some(1984),
+                ..request
+            },
+            "TMDB"
+        )
+        .is_err());
+        assert!(movie_poster(&json!("http://unsafe.example/image.jpg")).is_none());
+        assert!(movie_poster(&json!("/../image.jpg")).is_none());
     }
 }

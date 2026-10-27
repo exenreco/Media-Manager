@@ -60,6 +60,13 @@ class FrameworkSlices(unittest.TestCase):
 
 
 class PlatformMetadata(unittest.TestCase):
+    def test_beta_versions_become_valid_numeric_apple_bundle_versions(self):
+        original = {'CFBundleVersion': '1.0.0-beta', 'CFBundleShortVersionString': '1.0.0-beta'}
+        info = packaging.platform_info(original, 'iphonesimulator', '26.0')
+        self.assertEqual(info['CFBundleVersion'], '1.0.0')
+        self.assertEqual(info['CFBundleShortVersionString'], '1.0.0')
+        self.assertEqual(original['CFBundleVersion'], '1.0.0-beta')
+
     def test_simulator_metadata_does_not_claim_to_be_a_phone_bundle(self):
         original = {'CFBundleSupportedPlatforms': ['iPhoneOS', 'iPadOS']}
         info = packaging.platform_info(original, 'iphonesimulator', '26.0')

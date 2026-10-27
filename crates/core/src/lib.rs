@@ -1,3 +1,4 @@
+pub mod artwork;
 pub mod health;
 pub mod history;
 pub mod metadata;
@@ -38,6 +39,9 @@ pub enum Source {
     #[default]
     TvMaze,
     Omdb {
+        key: String,
+    },
+    Tmdb {
         key: String,
     },
     Custom {

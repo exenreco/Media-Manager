@@ -1,0 +1,34 @@
+/* Keep headings unchanged; give phone content a comfortable reading size.
+   Loaded after the page styles so compact desktop text does not leak through. */
+@media (max-width:760px) {
+ main { font-size:15px; line-height:1.5; }
+ label, .poster-inspector .check, details { font-size:14px; }
+ input, select, textarea, .library-search input { font-size:16px; line-height:1.5; }
+ button, .apply-bar button, .media-inspector .secondary,
+ .poster-navigation button, .island-actions button { font-size:14px; line-height:1.4; }
+ .hint, .poster-box .hint, .status, .artwork-download-bar .status,
+ .notice, .empty p, .dialog p, .inspector-filename, .media-inspector .error,
+ .playback-note, .video-placeholder, .page-loading-badge,
+ .welcome-lead, .island-expanded p, .island-summary strong { font-size:14px; line-height:1.65; }
+ .badge, .preview-heading .badge, .season-count, .carousel-position,
+ .poster-credit, .poster-source, .poster-comparison figcaption,
+ .apply-bar strong, .artwork-download-bar strong, .apply-bar .hint,
+ .resume-summary small, .welcome-step-number { font-size:13px; }
+ .library-toggle button, .titlebar-media-toggle button,
+ .library-heading .library-tabs button { font-size:12px; line-height:1.4; }
+ .season-heading { font-size:14px; }
+ table, .season-group table, .poster-result { font-size:14px; line-height:1.5; }
+ th { font-size:13px; color:#a5aaa7; }
+ .season-count, .poster-source { color:#a0afa5; }
+ .poster-grid .poster-card figcaption, .poster-grid .poster-card .hint,
+ .poster-card:not(.compact) figcaption .hint, .poster-sort-options label,
+ .artwork-choice { font-size:14px; line-height:1.5; }
+ .health-legend li,
+ .health-bar-row>div:first-child, .health-scanning, .health-findings p,
+ .health-ring span { font-size:14px; }
+ .dock-tab, .dock-tool { font-size:11px; line-height:1.3; color:#aaa; }
+ .dock-tab { height:56px; gap:3px; }
+ .dock-bar { height:64px; }
+ .dock-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+ .layout { padding-bottom:112px; }
+}
