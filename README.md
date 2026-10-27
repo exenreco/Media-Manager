@@ -17,7 +17,7 @@ controlling a library from another device.
 - TV-show and movie modes, optional season selection, Plex/Jellyfin naming and custom templates.
 - Season tables with missing episodes, filename edits and media playback.
 - Show/season poster previews and optional downloads that preserve existing images.
-- Resizable desktop panels; Back/Next steps guide single-column windows through settings, posters and preview.
+- Working source: icon rail, custom desktop title bar, inline video/title inspector, and an expanding mobile tool menu.
 - Local libraries or an authenticated remote library server.
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.

@@ -2,7 +2,7 @@ use crate::rename::{RenamePlan, TaskStatus};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, path::Path};
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthReport {
     pub files: usize,
     pub missing_episodes: usize,

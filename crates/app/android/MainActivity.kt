@@ -337,6 +337,24 @@ private class LocalStorage(private val activity: MainActivity) {
         activity.runOnUiThread { web.evaluateJavascript(script, null) }
     }
     fun handle(command: JSONObject, web: WebView) {
+        if (command.optString("op") == "appDirectories") {
+            reply(web,command,JSONObject().put("state",activity.filesDir.absolutePath));return
+        }
+        if (command.optString("op") == "scanPairing") {
+            if (pending != null) { reply(web, command, JSONObject().put("error", "Close the current scanner or picker first")); return }
+            pending = Pair(command, web)
+            try {
+                com.google.zxing.integration.android.IntentIntegrator(activity)
+                    .setCaptureActivity(PairingCaptureActivity::class.java)
+                    .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+                    .setPrompt("Align the desktop Media Manager QR code inside the guide")
+                    .setTimeout(240000L)
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(false)
+                    .initiateScan()
+            } catch (error: Exception) { pending = null; reply(web, command, JSONObject().put("error", error.message ?: "Camera unavailable")) }
+            return
+        }
         if (command.optString("op") == "pick" || command.optString("op") == "pickImage") {
             if (pending != null) { reply(web,command,JSONObject().put("error","A folder picker is already open")); return }
             pending = Pair(command, web)
@@ -357,6 +375,17 @@ private class LocalStorage(private val activity: MainActivity) {
         }
     }
     fun result(code: Int, result: Int, data: android.content.Intent?) {
+        if (code == com.google.zxing.integration.android.IntentIntegrator.REQUEST_CODE) {
+            val current = pending ?: return
+            if (current.first.optString("op") != "scanPairing") return
+            pending = null
+            val scanned = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(code, result, data)
+            val text = scanned?.contents
+            if (text == null) reply(current.second, current.first, JSONObject().put("error", "Scan cancelled or camera permission denied"))
+            else if (text.length > 8192) reply(current.second, current.first, JSONObject().put("error", "Pairing QR is too large"))
+            else reply(current.second, current.first, JSONObject().put("text", text))
+            return
+        }
         if (code != requestCode) return
         val (command,web)=pending ?: return; pending=null
         try {
@@ -417,6 +446,10 @@ private class LocalStorage(private val activity: MainActivity) {
     private fun execute(command: JSONObject): JSONObject {
         val tree=root(command)
         when(command.getString("op")) {
+            "checkFolder" -> {
+                require(resolve(tree, "").dir) { "Choose a media folder first" }
+                return JSONObject().put("connected",true)
+            }
             "list" -> {
                 val entries=org.json.JSONArray(); val visited=mutableSetOf<String>()
                 fun walk(doc: Doc, path: String, depth: Int) {
@@ -430,6 +463,21 @@ private class LocalStorage(private val activity: MainActivity) {
                 }
                 val doc=resolve(tree,"");walk(doc,"",0)
                 return JSONObject().put("entries",entries).put("name",doc.name).put("cache",activity.cacheDir.absolutePath).put("state",activity.filesDir.absolutePath)
+            }
+            "readMedia" -> {
+                val doc=resolve(tree,command.getString("path"));require(!doc.dir)
+                val offset=command.getLong("offset");val count=command.getInt("count")
+                require(offset>=0 && count in 0..1048576 && offset<=doc.size && count.toLong()<=doc.size-offset) { "Invalid media range" }
+                val data=ByteArray(count)
+                if(count>0) resolver.openFileDescriptor(doc.uri,"r").use { descriptor ->
+                    require(descriptor!=null) { "Media unavailable" }
+                    java.io.FileInputStream(descriptor.fileDescriptor).use { input ->
+                        input.channel.position(offset)
+                        var read=0
+                        while(read<count) { val n=input.read(data,read,count-read);require(n>0){"Incomplete media read"};read+=n }
+                    }
+                }
+                return JSONObject().put("size",doc.size).put("data",android.util.Base64.encodeToString(data,android.util.Base64.NO_WRAP))
             }
             "hash" -> {
                 val doc=resolve(tree,command.getString("path"));require(!doc.dir)
@@ -448,6 +496,35 @@ private class LocalStorage(private val activity: MainActivity) {
                 require(children(tree,parent).none { it.name.equals(name,true) }) { "Destination exists; nothing was overwritten" }
                 val updated=android.provider.DocumentsContract.renameDocument(resolver,doc.uri,name) ?: error("Provider refused rename")
                 require(read(tree,android.provider.DocumentsContract.getDocumentId(updated)).name==name) { "Provider changed the requested name; rebuild preview" }
+            }
+            "savePoster" -> {
+                val path=parts(command.getString("path"));require(path.isNotEmpty())
+                val parent=resolve(tree,path.dropLast(1).joinToString("/"));val name=path.last()
+                require(name.substringAfterLast('.').lowercase() in listOf("jpg","jpeg","png","webp"))
+                val existing=children(tree,parent).firstOrNull {it.name.equals(name,true)}
+                if(existing!=null) {
+                    require(command.optBoolean("replace")){"Confirm Replace existing poster first"}
+                    require(!existing.dir && existing.size<=10*1024*1024)
+                    val digest=java.security.MessageDigest.getInstance("SHA-256")
+                    resolver.openInputStream(existing.uri).use {stream -> require(stream!=null);val buffer=ByteArray(65536);while(true){val n=stream.read(buffer);if(n<0)break;digest.update(buffer,0,n)}}
+                    require(digest.digest().joinToString(""){"%02x".format(it)}==command.optString("expected")){"Existing poster changed; select it again"}
+                }
+                val bytes=android.util.Base64.decode(command.getString("data"),android.util.Base64.DEFAULT);require(bytes.size<=10*1024*1024)
+                val mime=when(name.substringAfterLast('.').lowercase()) {"png"->"image/png";"webp"->"image/webp";else->"image/jpeg"}
+                val temporary=".media-manager-${java.util.UUID.randomUUID()}.${name.substringAfterLast('.')}"
+                val temp=android.provider.DocumentsContract.createDocument(resolver,parent.uri,mime,temporary) ?: error("Could not create poster")
+                var backup:android.net.Uri?=null
+                try {
+                    resolver.openOutputStream(temp,"w").use {stream -> require(stream!=null);stream.write(bytes)}
+                    if(existing!=null) {backup=android.provider.DocumentsContract.renameDocument(resolver,existing.uri,".media-manager-backup-${java.util.UUID.randomUUID()}.${name.substringAfterLast('.')}") ?: error("Could not preserve existing poster")}
+                    val saved=android.provider.DocumentsContract.renameDocument(resolver,temp,name) ?: error("Could not save poster")
+                    require(read(tree,android.provider.DocumentsContract.getDocumentId(saved)).name==name){"Provider changed the poster name"}
+                    backup?.let {android.provider.DocumentsContract.deleteDocument(resolver,it)}
+                } catch(error:Exception) {
+                    if(backup!=null && children(tree,parent).none {it.name.equals(name,true)}) {android.provider.DocumentsContract.renameDocument(resolver,backup!!,name)}
+                    try {android.provider.DocumentsContract.deleteDocument(resolver,temp)} catch(_:Exception) {}
+                    throw error
+                }
             }
             "write" -> {
                 val path=parts(command.getString("path"));require(path.isNotEmpty())
@@ -477,5 +554,46 @@ private class LocalStorage(private val activity: MainActivity) {
             else -> error("Unknown storage command")
         }
         return JSONObject()
+    }
+}
+
+
+/** Dedicated portrait QR scanner; the guide matches the decoder's square crop. */
+class PairingCaptureActivity : com.journeyapps.barcodescanner.CaptureActivity() {
+    override fun initializeContent(): com.journeyapps.barcodescanner.DecoratedBarcodeView {
+        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val scanner = com.journeyapps.barcodescanner.DecoratedBarcodeView(this)
+        scanner.viewFinder.setLaserVisibility(false)
+        root.addView(scanner, FrameLayout.LayoutParams(-1, -1))
+        val guide = object : View(this) {
+            private val line = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(157, 232, 208); style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 3 * resources.displayMetrics.density
+            }
+            override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+                super.onSizeChanged(w, h, oldw, oldh)
+                val side = (minOf(w, h) * 0.72).roundToInt()
+                scanner.barcodeView.framingRectSize = com.journeyapps.barcodescanner.Size(side, side)
+            }
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val side = minOf(width, height) * 0.72f
+                val left = (width - side) / 2; val top = (height - side) / 2
+                canvas.drawRoundRect(android.graphics.RectF(left, top, left + side, top + side), 16f, 16f, line)
+            }
+        }
+        guide.isClickable = false
+        guide.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        root.addView(guide, FrameLayout.LayoutParams(-1, -1))
+        val cancel = Button(this).apply {
+            text = "Cancel"; contentDescription = "Cancel pairing scan"
+            setOnClickListener { setResult(android.app.Activity.RESULT_CANCELED); finish() }
+        }
+        val density = resources.displayMetrics.density
+        root.addView(cancel, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+            leftMargin = (20 * density).roundToInt(); topMargin = (48 * density).roundToInt()
+        })
+        setContentView(root)
+        return scanner
     }
 }

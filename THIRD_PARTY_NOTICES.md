@@ -25,3 +25,5 @@ this license does not relicense third-party libraries, SDKs, artwork or provider
 
 Do not include developer credentials, signing keys or personal library data in
 source or binary distributions.
+
+- Local TLS hosting uses axum-server (MIT), rcgen (MIT/Apache-2.0), and rustls (Apache-2.0/ISC/MIT). Android QR camera scanning uses JourneyApps ZXing Android Embedded (Apache-2.0) and ZXing (Apache-2.0). iOS uses Apple AVFoundation.
