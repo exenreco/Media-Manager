@@ -36,6 +36,7 @@ def macos(source, output, version, arch):
         shutil.copy2(source / 'media-manager-server', contents / 'MacOS/media-manager-server')
         for name in ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md']:
             shutil.copy2(source / name, contents / 'Resources' / name)
+        subprocess.run(['codesign', '--force', '--sign', '-', str(contents / 'MacOS/media-manager-server')], check=True)
         subprocess.run(['codesign', '--force', '--sign', '-', str(app)], check=True)
         # Analyze explicitly to disable relocation: upgrades always target /Applications.
         components = Path(temporary) / 'components.plist'
@@ -79,7 +80,7 @@ def linux(source, output, version, arch):
         debian = work / 'debian'
         debian.mkdir()
         (debian / 'control').write_text('Source: media-manager\nSection: video\nPriority: optional\n'
-                                      'Maintainer: Media Manager <noreply@exenreco.com>\n\n'
+                                      'Maintainer: Media Manager <exenreco@users.noreply.github.com>\n\n'
                                       'Package: media-manager\nArchitecture: any\nDescription: Media library manager\n')
         result = subprocess.check_output(['dpkg-shlibdeps', '-O',
                     '-e' + str((binaries / 'media-manager').resolve()),
@@ -92,7 +93,7 @@ def linux(source, output, version, arch):
         size = sum(p.stat().st_size for p in root.rglob('*') if p.is_file()) // 1024 + 1
         control.write_text(f'Package: media-manager\nVersion: {version}\nArchitecture: {deb_arch}\n'
                            'Section: video\nPriority: optional\n'
-                           'Maintainer: Media Manager <noreply@exenreco.com>\n'
+                           'Maintainer: Media Manager <exenreco@users.noreply.github.com>\n'
                            'Homepage: https://github.com/exenreco/Media-Manager\n'
                            f'Installed-Size: {size}\nDepends: {depends}\n'
                            'Description: Preview and organize TV shows and movies\n'
