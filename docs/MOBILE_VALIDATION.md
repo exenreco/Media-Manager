@@ -144,4 +144,13 @@ and configured remote HTTPS servers. Rust integration tests verify local redempt
 certificate rejection, one-use codes, and host shutdown. Camera permission denial,
 cancellation, actual scanning from a desktop display, device LAN/firewall reachability,
 and iOS local-network privacy prompts still need native runtime acceptance.
-Camera build validation: https://github.com/exenreco/Media-Manager/actions/runs/40418232110.
+Final camera build validation passed: https://github.com/exenreco/Media-Manager/actions/runs/40418886642
+(commit `fcead9b729045245556d0e5f216d7dc7d6163a56`). Android and iOS compiled,
+installed, launched, and survived startup. Windows/macOS/Linux desktop checks also
+passed on the validation branch. The Windows pairing UI generated a local TLS QR
+for a disposable fixture library, with expiry countdown and Stop local sharing.
+The final APK was installed in a separate local Android 15 test emulator. The new
+Scan button opens the native QR camera activity. Its file-backed simulated camera
+produced a black preview, so successful decoding/automatic pairing through the
+camera is **not marked passed**. Physical-device and iOS camera acceptance remain
+pending. The existing user emulator and real media library were preserved.

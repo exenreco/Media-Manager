@@ -342,6 +342,7 @@ private class LocalStorage(private val activity: MainActivity) {
             pending = Pair(command, web)
             try {
                 com.google.zxing.integration.android.IntentIntegrator(activity)
+                    .setCaptureActivity(PairingCaptureActivity::class.java)
                     .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
                     .setPrompt("Align the desktop Media Manager QR code inside the guide")
                     .setTimeout(240000L)
@@ -502,5 +503,46 @@ private class LocalStorage(private val activity: MainActivity) {
             else -> error("Unknown storage command")
         }
         return JSONObject()
+    }
+}
+
+
+/** Dedicated portrait QR scanner; the guide matches the decoder's square crop. */
+class PairingCaptureActivity : com.journeyapps.barcodescanner.CaptureActivity() {
+    override fun initializeContent(): com.journeyapps.barcodescanner.DecoratedBarcodeView {
+        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val scanner = com.journeyapps.barcodescanner.DecoratedBarcodeView(this)
+        scanner.viewFinder.setLaserVisibility(false)
+        root.addView(scanner, FrameLayout.LayoutParams(-1, -1))
+        val guide = object : View(this) {
+            private val line = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(157, 232, 208); style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 3 * resources.displayMetrics.density
+            }
+            override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+                super.onSizeChanged(w, h, oldw, oldh)
+                val side = (minOf(w, h) * 0.72).roundToInt()
+                scanner.barcodeView.framingRectSize = com.journeyapps.barcodescanner.Size(side, side)
+            }
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val side = minOf(width, height) * 0.72f
+                val left = (width - side) / 2; val top = (height - side) / 2
+                canvas.drawRoundRect(android.graphics.RectF(left, top, left + side, top + side), 16f, 16f, line)
+            }
+        }
+        guide.isClickable = false
+        guide.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        root.addView(guide, FrameLayout.LayoutParams(-1, -1))
+        val cancel = Button(this).apply {
+            text = "Cancel"; contentDescription = "Cancel pairing scan"
+            setOnClickListener { setResult(android.app.Activity.RESULT_CANCELED); finish() }
+        }
+        val density = resources.displayMetrics.density
+        root.addView(cancel, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+            leftMargin = (20 * density).roundToInt(); topMargin = (48 * density).roundToInt()
+        })
+        setContentView(root)
+        return scanner
     }
 }
