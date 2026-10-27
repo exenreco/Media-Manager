@@ -202,7 +202,6 @@ jobs:
           New-Item -ItemType Directory -Path scripts/installers -Force | Out-Null
           Copy-Item .release-tools/scripts/installers/* scripts/installers/ -Recurse -Force
           & .release-tools/scripts/prepare_windows_installer.ps1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/package_installer.py --platform windows --arch x86_64 --version $env:RELEASE_TAG.Substring(1) --iscc "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" --webview-bootstrapper .tools/installer/MicrosoftEdgeWebview2Setup.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Sign Windows installer
@@ -227,7 +226,9 @@ jobs:
         env:
           SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED }}
         run: |
-          $taskInstaller = Get-Item "dist/*-setup.exe"
+          $taskInstallers = @(Get-ChildItem dist -Filter '*-setup.exe' -File)
+          if ($taskInstallers.Count -ne 1) { throw 'Expected exactly one built Windows installer' }
+          $taskInstaller = $taskInstallers[0]
           if ($env:SIGNING_ENABLED -eq 'true') {
             $taskSignature = Get-AuthenticodeSignature -LiteralPath $taskInstaller.FullName
             if ($taskSignature.Status -ne 'Valid' -or $null -eq $taskSignature.TimeStamperCertificate) { throw 'Installer signature verification failed' }
