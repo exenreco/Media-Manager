@@ -253,25 +253,43 @@ pub async fn apply(mut plan: RenamePlan) -> Result<RenamePlan> {
     Ok(plan)
 }
 
-pub async fn play(plan: &RenamePlan, index: usize) -> Result<Option<String>> {
-    let (root, path) = {
-        let guard = LIBRARY.lock().unwrap();
-        let library = guard.as_ref().context("Build a preview first")?;
-        if library.plan != plan.id.to_string() {
-            bail!("Preview expired");
-        }
-        let path = rename::playback_path(plan, index)?;
-        (library.root.clone(), relative(&library.mirror, &path)?)
-    };
-    command(json!({"op":"play","root":root,"path":path})).await?;
-    Ok(None)
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn media_document(plan: &RenamePlan, index: usize) -> Result<(String, String)> {
+    let guard = LIBRARY.lock().unwrap();
+    let library = guard.as_ref().context("Build a preview first")?;
+    if library.plan != plan.id.to_string() {
+        bail!("Preview expired");
+    }
+    let path = rename::playback_path(plan, index)?;
+    Ok((library.root.clone(), relative(&library.mirror, &path)?))
 }
 
-pub async fn pick_image() -> Result<Vec<u8>> {
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn read_media(
+    root: &str,
+    path: &str,
+    offset: u64,
+    count: usize,
+) -> Result<(u64, Vec<u8>)> {
     use base64::Engine;
-    let response = command(json!({"op":"pickImage"})).await?;
-    Ok(base64::engine::general_purpose::STANDARD
-        .decode(response["data"].as_str().context("Missing QR image")?)?)
+    anyhow::ensure!(count <= 1024 * 1024, "Media read too large");
+    let response =
+        command(json!({"op":"readMedia","root":root,"path":path,"offset":offset,"count":count}))
+            .await?;
+    let size = response["size"].as_u64().context("Missing media size")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(response["data"].as_str().unwrap_or(""))?;
+    anyhow::ensure!(bytes.len() == count, "Incomplete media read");
+    Ok((size, bytes))
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn scan_pairing() -> Result<String> {
+    let response = command(json!({"op":"scanPairing"})).await?;
+    Ok(response["text"]
+        .as_str()
+        .context("Scanner returned no pairing invitation")?
+        .to_string())
 }
 #[derive(Serialize, Deserialize)]
 struct MobileRecord {

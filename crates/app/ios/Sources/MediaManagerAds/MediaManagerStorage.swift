@@ -3,6 +3,7 @@ import WebKit
 import UniformTypeIdentifiers
 import QuickLook
 import CryptoKit
+import AVFoundation
 
 /// Security-scoped folder access; no access outside folders chosen in Files.
 @MainActor
@@ -43,6 +44,23 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
               url.scheme == "dioxus", url.host == "index.html",
               let text = message.body as? String, let bytes = text.data(using: .utf8),
               let command = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else { return }
+        if command["op"] as? String == "scanPairing" {
+            guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before scanning"]); return }
+            pending = command
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                Task { @MainActor in
+                    guard let self, self.pending != nil else { return }
+                    guard granted else { self.pending = nil; self.reply(command, ["error": "Camera permission denied. Enable Camera access in Settings to scan."]); return }
+                    let scanner = PairingCameraController { [weak self] result in
+                        guard let self else { return }; self.pending = nil
+                        switch result { case .success(let text): self.reply(command, ["text": text]); case .failure(let error): self.reply(command, ["error": error.localizedDescription]) }
+                    }
+                    scanner.modalPresentationStyle = .fullScreen
+                    controller.present(scanner, animated: true)
+                }
+            }
+            return
+        }
         if command["op"] as? String == "pick" || command["op"] as? String == "pickImage" {
             guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before choosing a folder"]); return }
             pending = command
@@ -155,6 +173,18 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
         guard let last = pieces.last else { throw NSError(domain: "Storage", code: 1) }
         let parent = try resolve(root, pieces.dropLast().joined(separator: "/"))
         let source = parent.appendingPathComponent(last)
+        if op == "readMedia" {
+            let file = try resolve(root, path)
+            let values = try attributes(file)
+            let size = (values["size"] as? NSNumber)?.uint64Value ?? 0
+            guard let offset = (command["offset"] as? NSNumber)?.uint64Value, let count = command["count"] as? Int,
+                  count >= 0, count <= 1048576, offset <= size, UInt64(count) <= size-offset else { throw NSError(domain: "Storage", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid media range"]) }
+            let handle = try FileHandle(forReadingFrom: file); defer { try? handle.close() }
+            try handle.seek(toOffset: offset)
+            let data = count == 0 ? Data() : (try handle.read(upToCount: count) ?? Data())
+            guard data.count == count else { throw NSError(domain: "Storage", code: 1, userInfo: [NSLocalizedDescriptionKey: "Incomplete media read"]) }
+            return ["size": size, "data": data.base64EncodedString()]
+        }
         if op == "hash" {
             let before=try attributes(source)
             let file=try FileHandle(forReadingFrom: source); defer {try? file.close()}

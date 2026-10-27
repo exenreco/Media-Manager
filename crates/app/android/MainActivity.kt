@@ -337,6 +337,21 @@ private class LocalStorage(private val activity: MainActivity) {
         activity.runOnUiThread { web.evaluateJavascript(script, null) }
     }
     fun handle(command: JSONObject, web: WebView) {
+        if (command.optString("op") == "scanPairing") {
+            if (pending != null) { reply(web, command, JSONObject().put("error", "Close the current scanner or picker first")); return }
+            pending = Pair(command, web)
+            try {
+                com.google.zxing.integration.android.IntentIntegrator(activity)
+                    .setCaptureActivity(PairingCaptureActivity::class.java)
+                    .setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+                    .setPrompt("Align the desktop Media Manager QR code inside the guide")
+                    .setTimeout(240000L)
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(false)
+                    .initiateScan()
+            } catch (error: Exception) { pending = null; reply(web, command, JSONObject().put("error", error.message ?: "Camera unavailable")) }
+            return
+        }
         if (command.optString("op") == "pick" || command.optString("op") == "pickImage") {
             if (pending != null) { reply(web,command,JSONObject().put("error","A folder picker is already open")); return }
             pending = Pair(command, web)
@@ -357,6 +372,17 @@ private class LocalStorage(private val activity: MainActivity) {
         }
     }
     fun result(code: Int, result: Int, data: android.content.Intent?) {
+        if (code == com.google.zxing.integration.android.IntentIntegrator.REQUEST_CODE) {
+            val current = pending ?: return
+            if (current.first.optString("op") != "scanPairing") return
+            pending = null
+            val scanned = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(code, result, data)
+            val text = scanned?.contents
+            if (text == null) reply(current.second, current.first, JSONObject().put("error", "Scan cancelled or camera permission denied"))
+            else if (text.length > 8192) reply(current.second, current.first, JSONObject().put("error", "Pairing QR is too large"))
+            else reply(current.second, current.first, JSONObject().put("text", text))
+            return
+        }
         if (code != requestCode) return
         val (command,web)=pending ?: return; pending=null
         try {
@@ -431,6 +457,21 @@ private class LocalStorage(private val activity: MainActivity) {
                 val doc=resolve(tree,"");walk(doc,"",0)
                 return JSONObject().put("entries",entries).put("name",doc.name).put("cache",activity.cacheDir.absolutePath).put("state",activity.filesDir.absolutePath)
             }
+            "readMedia" -> {
+                val doc=resolve(tree,command.getString("path"));require(!doc.dir)
+                val offset=command.getLong("offset");val count=command.getInt("count")
+                require(offset>=0 && count in 0..1048576 && offset<=doc.size && count.toLong()<=doc.size-offset) { "Invalid media range" }
+                val data=ByteArray(count)
+                if(count>0) resolver.openFileDescriptor(doc.uri,"r").use { descriptor ->
+                    require(descriptor!=null) { "Media unavailable" }
+                    java.io.FileInputStream(descriptor.fileDescriptor).use { input ->
+                        input.channel.position(offset)
+                        var read=0
+                        while(read<count) { val n=input.read(data,read,count-read);require(n>0){"Incomplete media read"};read+=n }
+                    }
+                }
+                return JSONObject().put("size",doc.size).put("data",android.util.Base64.encodeToString(data,android.util.Base64.NO_WRAP))
+            }
             "hash" -> {
                 val doc=resolve(tree,command.getString("path"));require(!doc.dir)
                 val digest=java.security.MessageDigest.getInstance("SHA-256")
@@ -477,5 +518,46 @@ private class LocalStorage(private val activity: MainActivity) {
             else -> error("Unknown storage command")
         }
         return JSONObject()
+    }
+}
+
+
+/** Dedicated portrait QR scanner; the guide matches the decoder's square crop. */
+class PairingCaptureActivity : com.journeyapps.barcodescanner.CaptureActivity() {
+    override fun initializeContent(): com.journeyapps.barcodescanner.DecoratedBarcodeView {
+        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val scanner = com.journeyapps.barcodescanner.DecoratedBarcodeView(this)
+        scanner.viewFinder.setLaserVisibility(false)
+        root.addView(scanner, FrameLayout.LayoutParams(-1, -1))
+        val guide = object : View(this) {
+            private val line = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(157, 232, 208); style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 3 * resources.displayMetrics.density
+            }
+            override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+                super.onSizeChanged(w, h, oldw, oldh)
+                val side = (minOf(w, h) * 0.72).roundToInt()
+                scanner.barcodeView.framingRectSize = com.journeyapps.barcodescanner.Size(side, side)
+            }
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val side = minOf(width, height) * 0.72f
+                val left = (width - side) / 2; val top = (height - side) / 2
+                canvas.drawRoundRect(android.graphics.RectF(left, top, left + side, top + side), 16f, 16f, line)
+            }
+        }
+        guide.isClickable = false
+        guide.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        root.addView(guide, FrameLayout.LayoutParams(-1, -1))
+        val cancel = Button(this).apply {
+            text = "Cancel"; contentDescription = "Cancel pairing scan"
+            setOnClickListener { setResult(android.app.Activity.RESULT_CANCELED); finish() }
+        }
+        val density = resources.displayMetrics.density
+        root.addView(cancel, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+            leftMargin = (20 * density).roundToInt(); topMargin = (48 * density).roundToInt()
+        })
+        setContentView(root)
+        return scanner
     }
 }

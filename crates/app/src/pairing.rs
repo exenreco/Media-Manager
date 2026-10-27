@@ -6,15 +6,21 @@ pub struct Invitation {
     pub version: u8,
     pub url: String,
     pub code: String,
+    #[serde(default)]
+    pub certificate: String,
+    #[serde(default)]
+    pub desktop: String,
+    #[serde(default)]
+    pub mode: String,
 }
 impl Invitation {
     pub fn parse(text: &str) -> Result<Self> {
-        if text.len() > 4096 {
+        if text.len() > 8192 {
             bail!("Invalid pairing invitation");
         }
         let value: Self = serde_json::from_str(text)
             .context("This QR code is not a Media Manager pairing invitation")?;
-        if value.version != 1 || uuid::Uuid::parse_str(&value.code).is_err() {
+        if !matches!(value.version, 1 | 2) || uuid::Uuid::parse_str(&value.code).is_err() {
             bail!("Invalid pairing invitation");
         }
         let url = reqwest::Url::parse(&value.url)?;
@@ -27,9 +33,34 @@ impl Invitation {
         {
             bail!("Pairing requires an HTTPS server URL without credentials or query parameters");
         }
+        if value.version == 2 && !matches!(value.mode.as_str(), "local" | "remote") {
+            bail!("Unknown pairing connection type");
+        }
+        if !value.certificate.is_empty() {
+            if value.version != 2 || value.mode != "local" {
+                bail!("Only local pairing may supply a desktop certificate");
+            }
+            let ip: std::net::IpAddr = url
+                .host_str()
+                .unwrap_or_default()
+                .trim_matches(['[', ']'])
+                .parse()
+                .context("Local pairing needs a numeric LAN address")?;
+            if !is_local(ip) {
+                bail!("Local pairing requires a private network address");
+            }
+            let der = base64::engine::general_purpose::STANDARD.decode(&value.certificate)?;
+            reqwest::Certificate::from_der(&der).context("Invalid desktop certificate")?;
+        } else if value.mode == "local" {
+            bail!("Local pairing requires its desktop certificate");
+        }
+        if value.desktop.len() > 100 {
+            bail!("Invalid desktop name");
+        }
         Ok(value)
     }
 }
+#[cfg(any(not(any(target_os = "android", target_os = "ios")), test))]
 pub fn qr_uri(text: &str) -> Result<String> {
     let code = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::M)?;
     let size = code.width();
@@ -50,6 +81,7 @@ pub fn qr_uri(text: &str) -> Result<String> {
         base64::engine::general_purpose::STANDARD.encode(svg)
     ))
 }
+#[cfg(test)]
 pub fn decode_image(bytes: &[u8]) -> Result<Invitation> {
     if bytes.len() > 10 * 1024 * 1024 {
         bail!("QR image must be smaller than 10 MB");
@@ -71,27 +103,18 @@ pub fn decode_image(bytes: &[u8]) -> Result<Invitation> {
     }
     bail!("No Media Manager pairing QR was found in this image")
 }
-pub async fn pick_invitation() -> Result<Invitation> {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let bytes = crate::mobile_storage::pick_image().await?;
-        decode_image(&bytes)
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let parent = dioxus::desktop::window();
-        let file = rfd::AsyncFileDialog::new()
-            .set_parent(parent.window.as_ref())
-            .add_filter("QR image", &["png", "jpg", "jpeg"])
-            .pick_file()
-            .await
-            .context("Image selection cancelled")?;
-        if std::fs::metadata(file.path())?.len() > 10 * 1024 * 1024 {
-            bail!("QR image must be smaller than 10 MB");
+pub(crate) fn is_local(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
         }
-        let bytes = file.read().await;
-        decode_image(&bytes)
     }
+}
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn scan_invitation() -> Result<Invitation> {
+    let text = crate::mobile_storage::scan_pairing().await?;
+    Invitation::parse(&text)
 }
 #[cfg(test)]
 mod tests {
@@ -127,6 +150,9 @@ mod image_tests {
             version: 1,
             url: "https://media.example.com".into(),
             code: uuid::Uuid::nil().to_string(),
+            certificate: String::new(),
+            desktop: String::new(),
+            mode: String::new(),
         };
         let text = serde_json::to_string(&invitation).unwrap();
         let code = qrcode::QrCode::new(text).unwrap();
@@ -155,5 +181,34 @@ mod image_tests {
         let decoded = decode_image(bytes.get_ref()).unwrap();
         assert_eq!(decoded.url, invitation.url);
         assert_eq!(decoded.code, invitation.code);
+    }
+}
+
+#[cfg(test)]
+mod local_invitation_tests {
+    use super::*;
+    #[test]
+    fn rejects_unpinned_local_and_unexpected_trust() {
+        let value = Invitation {
+            version: 2,
+            url: "https://192.168.1.5:8787".into(),
+            code: uuid::Uuid::new_v4().to_string(),
+            certificate: String::new(),
+            desktop: "Desktop".into(),
+            mode: "local".into(),
+        };
+        assert!(Invitation::parse(&serde_json::to_string(&value).unwrap()).is_err());
+        let remote = Invitation {
+            mode: "remote".into(),
+            certificate: "invalid".into(),
+            ..value.clone()
+        };
+        assert!(Invitation::parse(&serde_json::to_string(&remote).unwrap()).is_err());
+        let public = Invitation {
+            url: "https://8.8.8.8".into(),
+            certificate: "invalid".into(),
+            ..value
+        };
+        assert!(Invitation::parse(&serde_json::to_string(&public).unwrap()).is_err());
     }
 }

@@ -4,6 +4,7 @@ mod ads;
 mod backend;
 mod branding;
 mod library_tools;
+mod media_player;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 mod mobile_storage;
 mod notifications;
@@ -12,6 +13,7 @@ mod poster;
 mod preview;
 mod profiles;
 mod session;
+mod workspace;
 
 use backend::Connection;
 use dioxus::prelude::*;
@@ -20,7 +22,11 @@ use tv_manager_core::{
     PlanRequest, Source,
 };
 
-const CSS: &str = include_str!("style.css");
+const CSS: &str = concat!(
+    include_str!("style.css"),
+    "\n",
+    include_str!("workspace.css")
+);
 
 #[derive(Clone, Copy)]
 struct PanelDrag {
@@ -169,14 +175,11 @@ fn App() -> Element {
     let mut confirming = use_signal(|| false);
     let mut consumed = use_signal(|| false);
     let mut show_poster_help = use_signal(|| false);
-    let mut editing = use_signal(|| None::<usize>);
-    let mut edit_name = use_signal(String::new);
-    let mut edit_error = use_signal(String::new);
-    let mut playback = use_signal(|| None::<(String, String)>);
-    let mut playback_error = use_signal(String::new);
+    let mut selected = use_signal(|| None::<usize>);
+    let mut search = use_signal(String::new);
     let mut left_width = use_signal(|| 340.0f64);
     let mut right_width = use_signal(|| 300.0f64);
-    let mut active_panel = use_signal(|| "settings");
+    let mut active_panel = use_signal(|| "preview");
     let mut drag = use_signal(|| None::<PanelDrag>);
     let mut splash_visible = use_signal(|| {
         cfg!(all(
@@ -289,12 +292,8 @@ fn App() -> Element {
         .iter()
         .filter(|p| p.status == TaskStatus::Ready)
         .count();
-    let can_apply = (ready > 0 || poster_count > 0)
-        && !conflict
-        && !changed
-        && !busy()
-        && !consumed()
-        && editing().is_none();
+    let can_apply =
+        (ready > 0 || poster_count > 0) && !conflict && !changed && !busy() && !consumed();
     let form_value = form.read().clone();
     let connection_value = connection.read().clone();
     let preview_request = snapshot
@@ -346,7 +345,6 @@ fn App() -> Element {
         url: artwork.seasons.get(season).cloned(),
     }));
     let pending_resume = resume.read().clone();
-    let active_playback = playback.read().clone();
 
     if splash_visible() {
         return rsx! { branding::Splash { progress: startup_progress(), onartworkready: move |_| splash_artwork_ready.set(true), oncontinue: move |_| {
@@ -358,7 +356,7 @@ fn App() -> Element {
     rsx! {
         style { "{CSS}" }
         if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
-        main { class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
+        main { "data-view":active_panel(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
             onpointermove: move |e| {
                 if let Some(start) = drag() {
                     let delta = e.client_coordinates().x - start.x;
@@ -368,13 +366,12 @@ fn App() -> Element {
             },
             onpointerup: move |_| { if drag().is_some() { drag.set(None); } },
             onpointercancel: move |_| drag.set(None),
+            workspace::Titlebar {}
+            if cfg!(not(any(target_os="android",target_os="ios"))) {workspace::ResizeEdges {}}
+            workspace::Navigation {active:active_panel}
             div { class: "layout", "data-active-panel": active_panel(), style: "--left-width:{left_width}px;--right-width:{right_width}px;",
-            header { class: "app-identity",
-                div { class: "brand", img { src: branding::icon_uri(), alt: "Media Manager icon" } }
-                div { h1 { "Media Manager" } p { "Organize your library, one clear preview at a time." } }
-            }
-                section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Library, naming and API settings",
-                    fieldset { disabled: busy() || confirming() || resume.read().is_some() || editing().is_some(),
+                section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Library, naming, ordering, profiles and API settings",
+                    fieldset { disabled: busy() || confirming() || resume.read().is_some(),
                         div { class: "library-toggle", role: "group", "aria-label": "Library type",
                             button { r#type: "button", class: if form_value.movie { "" } else { "selected" },
                                 "aria-pressed": (!form_value.movie).to_string(),
@@ -386,7 +383,7 @@ fn App() -> Element {
                         if cfg!(any(target_os = "android", target_os = "ios")) {
                             ads::NativeAdSlot {}
                         }
-                        section { class: "settings-group",
+                        section { class: "settings-group connect-group",
                         h2 { "Connect your library" }
                         label { "Storage"
                             select { value: if connection_value.remote { "remote" } else { "local" },
@@ -405,6 +402,15 @@ fn App() -> Element {
                             if cfg!(any(target_os = "android", target_os = "ios")) {
                                 p { class: "hint", "Choose a media folder using the system picker. Only that folder is shared with Media Manager." }
                                 p { class: "hint", if connection_value.root.is_empty() { "No folder selected" } else { "Media folder selected" } }
+                            } else {
+                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
+                                    oninput: move |e| connection.write().root = e.value() } }
+                            }
+                        }
+                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
+                            oninput: move |e| form.write().folder = e.value() } }
+                        if !connection_value.remote {
+                            if cfg!(any(target_os = "android", target_os = "ios")) {
                                 button { class: "secondary", onclick: move |_| {
                                     #[cfg(any(target_os = "android", target_os = "ios"))]
                                     spawn(async move {
@@ -415,8 +421,6 @@ fn App() -> Element {
                                     });
                                 }, "Choose media folder" }
                             } else {
-                                label { "Media root" input { value: "{connection_value.root}", placeholder: "Select a folder or enter its absolute path",
-                                    oninput: move |e| connection.write().root = e.value() } }
                                 button { class: "secondary", onclick: move |_| {
                                     #[cfg(all(feature = "desktop", not(any(target_os = "android", target_os = "ios"))))]
                                     {
@@ -433,11 +437,9 @@ fn App() -> Element {
                                 }, "Browse folders" }
                             }
                         }
-                        label { "Subfolder (optional)" input { value: "{form_value.folder}", placeholder: "Example: Breaking Bad/Season 01",
-                            oninput: move |e| form.write().folder = e.value() } }
                         }
-                        library_tools::Pairing {connection,busy,message}
-                        section { class: "settings-group",
+                        div {class:"devices-group",library_tools::Pairing {connection,form,busy,message}}
+                        section { class: "settings-group api-group",
                             h2 { "API settings" }
                             if !form_value.movie {
                             label { "Episode source"
@@ -497,22 +499,6 @@ fn App() -> Element {
                         if matches!(form_value.source.as_str(),"tvmaze"|"omdb"|"custom") && (!form_value.movie || form_value.source=="omdb") {
                             library_tools::MatchPicker {form,connection,busy,message}
                         }
-                        library_tools::NumberingOptions {form}
-                        label { "Naming format"
-                            select { value: if form_value.jellyfin { "jellyfin" } else if form_value.plex { "plex" } else { "none" },
-                                onchange: move |e| {
-                                    let value = e.value();
-                                    let mut current = form.write();
-                                    current.plex = value == "plex";
-                                    current.jellyfin = value == "jellyfin";
-                                },
-                                option { value: "none", "None" }
-                                option { value: "plex", if form_value.movie { "Plex movie naming" } else { "Plex episode naming" } }
-                                option { value: "jellyfin", "Jellyfin naming" }
-                            }
-                        }
-                        p {class:"hint",if form_value.movie {if form_value.plex || form_value.jellyfin {"Example: Movie (2020).mkv"}else{"Example: Movie.mkv"}}else if form_value.jellyfin {"Example: Series (2020) S01E01 - Pilot.mkv"}else if form_value.plex {"Example: Series (2020) - S01E01 - Pilot.mkv"}else {"Example: S01E01 - Pilot.mkv"}}
-                        library_tools::Profiles {form,message}
                         if !form_value.movie {
                             if form_value.source == "manual" {
                                 label { "Episode titles, one per line" textarea { rows: "6", value: "{form_value.titles}",
@@ -530,6 +516,28 @@ fn App() -> Element {
                             }
                         }
                         }
+                        section { class: "settings-group ordering-group",
+                            h2 { "Ordering" }
+                            label { "Naming format"
+                                select { value: if form_value.jellyfin { "jellyfin" } else if form_value.plex { "plex" } else { "none" },
+                                    onchange: move |e| {
+                                        let value = e.value();
+                                        let mut current = form.write();
+                                        current.plex = value == "plex";
+                                        current.jellyfin = value == "jellyfin";
+                                    },
+                                    option { value: "none", "None" }
+                                    option { value: "plex", if form_value.movie { "Plex movie naming" } else { "Plex episode naming" } }
+                                    option { value: "jellyfin", "Jellyfin naming" }
+                                }
+                            }
+                            p {class:"hint",if form_value.movie {if form_value.plex || form_value.jellyfin {"Example: Movie (2020).mkv"}else{"Example: Movie.mkv"}}else if form_value.jellyfin {"Example: Series (2020) S01E01 - Pilot.mkv"}else if form_value.plex {"Example: Series (2020) - S01E01 - Pilot.mkv"}else {"Example: S01E01 - Pilot.mkv"}}
+                            library_tools::NumberingOptions {form}
+                        }
+                        section { class: "settings-group profiles-group",
+                            h2 { "Profiles" }
+                            library_tools::Profiles {form,message}
+                        }
                         div { class: "settings-footer",
                         button { class: "primary", disabled: busy(), onclick: move |_| {
                             let f = form.read().clone();
@@ -538,7 +546,7 @@ fn App() -> Element {
                                 Ok(r) => r,
                                 Err(e) => { message.set(e.to_string()); return; }
                             };
-                            busy.set(true); message.set("Building preview…".into()); plan.set(None); consumed.set(false);
+                            busy.set(true); message.set("Building preview…".into()); plan.set(None); selected.set(None); consumed.set(false);
                             spawn(async move {
                                 match c.preview(&request).await {
                                     Ok(p) => { plan.set(Some(p)); snapshot.set(Some((f, c))); message.set("Preview ready. Review every destination before applying.".into()); active_panel.set("posters"); }
@@ -563,8 +571,10 @@ fn App() -> Element {
                 }
                 div { class: "center-column",
                 section { class: "panel preview", id: "rename-preview",
-                    library_tools::HistoryHealth {connection,form,plan,busy,message,consumed,changed}
-                    div { class: "preview-heading", h2 { "Review & rename" } span { class: "badge", "{ready} ready" } }
+                    div {class:"health-tools",library_tools::HistoryHealth {connection,form,plan,busy,message,consumed,changed}}
+                    div { class: "preview-heading", div {p {class:"eyebrow","YOUR WORKSPACE"} h2 { "Media library" }} span { class: "badge", "{ready} ready to rename" } }
+                    div {class:"library-search",workspace::Icon {name:"search"} input {r#type:"search",value:"{search}",placeholder:"Search files…","aria-label":"Search library files",oninput:move|e|search.set(e.value())}}
+
                     p { class: "hint",match preview_request.options.numbering {
                         tv_manager_core::Numbering::Sequence=>"Files are paired in natural filename order. Review carefully if episodes are missing.",
                         tv_manager_core::Numbering::Detected=>"Episode numbers are read from filenames. Custom mappings take precedence. Review every match.",
@@ -575,7 +585,7 @@ fn App() -> Element {
                     if changed { p { class: "notice", "Settings changed. Build a new preview before applying." } }
                     if conflict { p { class: "notice", "Resolve destination conflicts, then build a new preview." } }
                     if groups.is_empty() {
-                        div { class: "empty", h3 { "Your next chapter starts here" } p { "Connect a folder and build a preview to see proposed filenames." } }
+                        div { class: "empty",workspace::Icon {name:"library"} h3 { "A little order. A better library." } p { "Connect your media folder, choose your naming preferences, and review changes before applying." } button {class:"primary",onclick:move|_|active_panel.set("settings"),"Connect a library"} }
                     } else {
                         for group in &groups {
                         details { class: "season-group", open: true, key: "{group.title(preview_request.movie)}",
@@ -587,7 +597,10 @@ fn App() -> Element {
                             thead { tr { th { "Current file" } th { "Proposed filename" } th { "Status" } th { class: "actions-heading", "Actions" } } }
                             tbody {
                                 for (index, row) in group.rows.iter().cloned() {
-                                    tr { key: "{index}",
+                                    if search().is_empty() || format!("{} {}",row.source.display(),row.target.display()).to_lowercase().contains(&search().to_lowercase()) {
+                                    tr { key: "{index}",class:if selected()==Some(index){"media-row selected"}else{"media-row"},tabindex:if row.directory {"-1"}else{"0"},"aria-selected":(selected()==Some(index)).to_string(),
+                                        onclick:move|_|{if !row.directory {selected.set(Some(index));active_panel.set("inspector");}},
+                                        onkeydown:move|e|{if !row.directory && (e.key()==Key::Enter || e.key()==Key::Character(" ".into())){e.prevent_default();selected.set(Some(index));active_panel.set("inspector");}},
                                         td { title: "{row.source.display()}", "{row.source.file_name().unwrap_or_default().to_string_lossy()}" }
                                         td { title: "{row.target.display()}", "{row.target.file_name().unwrap_or_default().to_string_lossy()}" }
                                         td { span { class: if matches!(row.status, TaskStatus::Conflict | TaskStatus::Failed) { "error" } else { "" }, "{row.status:?}" }
@@ -596,32 +609,14 @@ fn App() -> Element {
                                         td { class: "file-actions",
                                             if !row.directory {
                                                 button { r#type: "button", class: "row-action", title: "Edit proposed filename", "aria-label": "Edit proposed filename",
-                                                    disabled: busy() || changed || consumed(), onclick: move |_| {
-                                                        if let Some(p) = plan.read().as_ref() {
-                                                            edit_name.set(p.tasks[index].target.file_name().unwrap_or_default().to_string_lossy().into());
-                                                            edit_error.set(String::new()); editing.set(Some(index));
-                                                        }
-                                                    },
+                                                    disabled: busy() || changed || consumed(), onclick: move |e| {e.stop_propagation();selected.set(Some(index));active_panel.set("inspector");},
                                                     svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8",
                                                         path { d: "m16 3 5 5-12 12-6 1 1-6L16 3Z" } path { d: "m13 6 5 5" }
                                                     }
                                                 }
-                                                button { r#type: "button", class: "row-action", title: "Play media file", "aria-label": "Play media file",
+                                                button { r#type: "button", class: "row-action", title: "Preview media file", "aria-label": "Preview media file",
                                                     disabled: busy() || changed || !tv_manager_core::rename::is_video(&row.source),
-                                                    onclick: move |_| {
-                                                        let Some(p) = plan.read().clone() else { return; };
-                                                        let c = snapshot.read().as_ref().map(|(_, c)| c.clone()).unwrap_or_else(|| connection.read().clone());
-                                                        let title = p.tasks[index].source.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                                        busy.set(true); message.set("Opening media player…".into()); playback_error.set(String::new());
-                                                        spawn(async move {
-                                                            match c.play(p, index).await {
-                                                                Ok(Some(url)) => { playback.set(Some((title, url))); message.set("Remote player opened.".into()); }
-                                                                Ok(None) => message.set("Opened in your default media player.".into()),
-                                                                Err(e) => message.set(format!("Could not play media: {e:#}")),
-                                                            }
-                                                            busy.set(false);
-                                                        });
-                                                    },
+                                                    onclick: move |e| {e.stop_propagation();selected.set(Some(index));active_panel.set("inspector");},
                                                     svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8",
                                                         path { d: "m8 4 12 8-12 8V4Z" }
                                                     }
@@ -629,6 +624,7 @@ fn App() -> Element {
                                             } else { span { class: "hint", "—" } }
                                         }
                                     }
+                                }
                                 }
                                 for episode in &group.missing {
                                     tr { class: "missing-row", key: "missing-{episode.season}-{episode.number}",
@@ -683,7 +679,9 @@ fn App() -> Element {
                     }
                 }
                 section { class: "panel controls right-panel", id: "poster-naming-settings", "aria-label": "Show and season posters",
-                    fieldset { disabled: busy() || confirming() || resume.read().is_some() || editing().is_some(),
+                    workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:changed || consumed() || confirming(),busy,message}
+                    div {class:"artwork-heading",h2 {"Artwork"}}
+                    fieldset { disabled: busy() || confirming() || resume.read().is_some(),
                         section { class: "poster-box", "aria-label": "Show and season posters",
                             poster::PosterCarousel { key: "{preview_show.name}-{preview_request.season:?}-{artwork_stale}", posters: carousel_posters }
                             if plan.read().is_none() || artwork_stale {
@@ -723,46 +721,6 @@ fn App() -> Element {
             }
             if drag().is_some() {
                 div { class: "resize-capture", onpointerleave: move |_| drag.set(None) }
-            }
-            if let Some(index) = editing() {
-                div { class: "overlay",
-                    section { class: "dialog panel", role: "dialog", "aria-modal": "true", "aria-labelledby": "edit-file-title",
-                        h2 { id: "edit-file-title", "Edit proposed filename" }
-                        p { "This changes the preview. The file is renamed when you apply it." }
-                        label { "Filename (keep the extension)" input { value: "{edit_name}", autofocus: true, disabled: busy(),
-                            oninput: move |e| edit_name.set(e.value()) } }
-                        if !edit_error().is_empty() { p { role: "alert", class: "error", "{edit_error}" } }
-                        div { class: "pair",
-                            button { class: "secondary", disabled: busy(), onclick: move |_| editing.set(None), "Cancel" }
-                            button { class: "primary", disabled: busy(), onclick: move |_| {
-                                let Some(p) = plan.read().clone() else { return; };
-                                let c = snapshot.read().as_ref().map(|(_, c)| c.clone()).unwrap_or_else(|| connection.read().clone());
-                                let filename = edit_name().trim().to_string();
-                                busy.set(true); edit_error.set(String::new());
-                                spawn(async move {
-                                    match c.edit(p, index, filename).await {
-                                        Ok(p) => { plan.set(Some(p)); editing.set(None); message.set("Proposed filename updated. Review the preview before applying.".into()); }
-                                        Err(e) => edit_error.set(format!("{e:#}")),
-                                    }
-                                    busy.set(false);
-                                });
-                            }, if busy() { "Saving…" } else { "Save filename" } }
-                        }
-                    }
-                }
-            }
-            if let Some((title, url)) = active_playback {
-                div { class: "overlay",
-                    section { class: "dialog panel playback-dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "playback-title",
-                        h2 { id: "playback-title", "{title}" }
-                        video { src: "{url}", controls: true, autoplay: true, playsinline: true, preload: "metadata",
-                            onerror: move |_| playback_error.set("This device cannot play this format or the stream is unavailable. Use a compatible player, or refresh the preview if the link expired.".into()) }
-                        if !playback_error().is_empty() { p { role: "alert", class: "error", "{playback_error}" } }
-                        p { class: "hint", "Remote playback uses a temporary link. Codec support depends on your device." }
-                        label { "Stream link (for a compatible player)" input { readonly: true, value: "{url}" } }
-                        button { class: "primary", onclick: move |_| playback.set(None), "Close player" }
-                    }
-                }
             }
             if let Some(previous) = pending_resume {
                 div { class: "overlay",

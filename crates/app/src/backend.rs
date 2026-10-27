@@ -11,6 +11,7 @@ pub struct Connection {
     pub root: String,
     pub url: String,
     pub token: String,
+    pub certificate: String,
 }
 
 impl Default for Connection {
@@ -20,6 +21,7 @@ impl Default for Connection {
             root: String::new(),
             url: "http://127.0.0.1:8787".into(),
             token: String::new(),
+            certificate: String::new(),
         }
     }
 }
@@ -44,7 +46,17 @@ impl Connection {
         if self.token.trim().is_empty() {
             bail!("Enter the server bearer token");
         }
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder();
+        if !self.certificate.is_empty() {
+            use base64::Engine;
+            let der = base64::engine::general_purpose::STANDARD
+                .decode(&self.certificate)
+                .context("Invalid desktop pairing certificate")?;
+            builder = builder
+                .tls_built_in_root_certs(false)
+                .add_root_certificate(reqwest::Certificate::from_der(&der)?);
+        }
+        let client = builder
             .timeout(Duration::from_secs(180))
             .redirect(reqwest::redirect::Policy::none())
             .build()?;
@@ -221,6 +233,7 @@ impl Connection {
         )
         .await
     }
+    #[cfg(any(not(any(target_os = "android", target_os = "ios")), test))]
     pub async fn pairing_code(&self) -> Result<String> {
         let (client, url) = self.client()?;
         let value: serde_json::Value = decode(
@@ -236,11 +249,14 @@ impl Connection {
             .context("Missing pairing code")?
             .into())
     }
-    pub async fn redeem_pairing(url: String, code: String) -> Result<Self> {
+    #[cfg(any(target_os = "android", target_os = "ios", test))]
+    pub async fn redeem_pairing(invitation: crate::pairing::Invitation) -> Result<Self> {
+        let code = invitation.code;
         // Reuse URL validation without ever transmitting the placeholder credential.
         let connection = Self {
             remote: true,
-            url,
+            url: invitation.url,
+            certificate: invitation.certificate,
             token: "pairing-validation".into(),
             ..Default::default()
         };
@@ -262,16 +278,36 @@ impl Connection {
         })
     }
 
-    /// None means the default desktop player was opened; Some is a remote stream.
-    pub async fn play(&self, plan: RenamePlan, index: usize) -> Result<Option<String>> {
+    pub async fn preview_media(
+        &self,
+        plan: RenamePlan,
+        index: usize,
+    ) -> Result<crate::media_player::Media> {
+        use crate::media_player::{Location, Media};
+        let path = tv_manager_core::rename::playback_path(&plan, index)?;
+        let mime = crate::media_player::mime(&path);
+        let id = uuid::Uuid::new_v4().to_string();
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
-            return crate::mobile_storage::play(&plan, index).await;
+            {
+                let (root, path) = crate::mobile_storage::media_document(&plan, index)?;
+                let (size, _) = crate::mobile_storage::read_media(&root, &path, 0, 0).await?;
+                return Ok(Media {
+                    location: Location::Document(root, path),
+                    size,
+                    mime,
+                    id,
+                });
+            }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
-                let path = rename::playback_path(&plan, index)?;
-                tokio::task::spawn_blocking(move || open_local(&path)).await??;
-                return Ok(None);
+                let size = std::fs::metadata(&path)?.len();
+                return Ok(Media {
+                    location: Location::File(path),
+                    size,
+                    mime,
+                    id,
+                });
             }
         }
         let (client, url) = self.client()?;
@@ -295,49 +331,21 @@ impl Connection {
         if ticket.len() != 36 || !ticket.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
             bail!("Invalid playback ticket");
         }
-        Ok(Some(url.join(&format!("/v1/media/{ticket}"))?.to_string()))
+        let stream = url.join(&format!("/v1/media/{ticket}"))?.to_string();
+        let response = client.head(&stream).send().await?.error_for_status()?;
+        let size = response
+            .headers()
+            .get("content-length")
+            .context("Missing media size")?
+            .to_str()?
+            .parse()?;
+        Ok(Media {
+            location: Location::Remote(client, stream),
+            size,
+            mime,
+            id,
+        })
     }
-}
-
-#[cfg(windows)]
-fn open_local(path: &std::path::Path) -> Result<()> {
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    let raw = path.to_string_lossy();
-    let normalized = if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
-    } else {
-        raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
-    };
-    let wide: Vec<u16> = normalized.encode_utf16().chain(Some(0)).collect();
-    let verb: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            verb.as_ptr(),
-            wide.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            1,
-        )
-    };
-    if result as isize <= 32 {
-        bail!("Windows could not open the media file. Install or choose a default video player.");
-    }
-    Ok(())
-}
-
-#[cfg(all(not(windows), not(any(target_os = "android", target_os = "ios"))))]
-fn open_local(path: &std::path::Path) -> Result<()> {
-    let program = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(program)
-        .arg(path)
-        .spawn()
-        .context("Could not open the default media player")?;
-    Ok(())
 }
 
 async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
@@ -353,4 +361,156 @@ async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> 
         );
     }
     response.json().await.context("Unexpected server response")
+}
+
+#[cfg(test)]
+mod local_pairing_tests {
+    use super::*;
+    use base64::Engine;
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "Manual simulated-camera harness: starts a temporary LAN host with disposable data"]
+    async fn camera_pairing_fixture_host() {
+        let ip: std::net::IpAddr = std::env::var("MEDIA_MANAGER_CAMERA_HOST_IP")
+            .expect("Set the test PC LAN IP")
+            .parse()
+            .unwrap();
+        assert!(crate::pairing::is_local(ip));
+        let output = std::path::PathBuf::from(
+            std::env::var("MEDIA_MANAGER_CAMERA_IMAGE").expect("Set a test camera PNG output path"),
+        );
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(
+            folder.path().join("camera-test.mkv"),
+            b"Disposable camera pairing fixture; not playable media",
+        )
+        .unwrap();
+        let host = tv_manager_server::host_library(folder.path().into(), ip)
+            .await
+            .unwrap();
+        let owner = Connection {
+            remote: true,
+            url: host.url.clone(),
+            token: host.token.clone(),
+            certificate: base64::engine::general_purpose::STANDARD.encode(&host.certificate),
+            ..Connection::default()
+        };
+        let invite = crate::pairing::Invitation {
+            version: 2,
+            url: owner.url.clone(),
+            code: owner.pairing_code().await.unwrap(),
+            certificate: owner.certificate.clone(),
+            desktop: "Disposable camera test".into(),
+            mode: "local".into(),
+        };
+        let text = serde_json::to_string(&invite).unwrap();
+        let code = qrcode::QrCode::new(text).unwrap();
+        let width = code.width();
+        let side = (width + 8) * 2;
+        let image = image::RgbImage::from_fn(1280, 720, |x, y| {
+            // The tested Android imagefile camera exposes a centered 720px source plane.
+            let left = (720 - side) / 2;
+            let top = (720 - side) / 2;
+            let x = x as usize;
+            let y = y as usize;
+            let dark = if x >= left && y >= top && x < left + side && y < top + side {
+                let cx = (x - left) / 2;
+                let cy = (y - top) / 2;
+                cx >= 4
+                    && cy >= 4
+                    && cx < width + 4
+                    && cy < width + 4
+                    && code[(cx - 4, cy - 4)] == qrcode::Color::Dark
+            } else {
+                false
+            };
+            image::Rgb([if dark { 0 } else { 255 }; 3])
+        });
+        image.save(output).unwrap();
+        println!(
+            "Disposable TLS camera pairing host ready at {} for 300 seconds",
+            owner.url
+        );
+        tokio::time::sleep(Duration::from_secs(300)).await;
+    }
+
+    #[tokio::test]
+    async fn desktop_tls_pairing_requires_qr_certificate_and_is_single_use() {
+        let folder = tempfile::tempdir().unwrap();
+        let host =
+            tv_manager_server::host_library(folder.path().into(), "127.0.0.1".parse().unwrap())
+                .await
+                .unwrap();
+        let owner = Connection {
+            remote: true,
+            url: host.url.clone(),
+            token: host.token.clone(),
+            certificate: base64::engine::general_purpose::STANDARD.encode(&host.certificate),
+            ..Connection::default()
+        };
+        std::fs::write(folder.path().join("Test.S01E01.mp4"), b"0123456789").unwrap();
+        let plan = owner
+            .preview(&PlanRequest {
+                name: "Test".into(),
+                season: Some(1),
+                source: tv_manager_core::Source::Manual {
+                    titles: "Pilot".into(),
+                },
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let media = owner.preview_media(plan, 0).await.unwrap();
+        let response = media
+            .response(
+                dioxus::desktop::wry::http::Request::builder()
+                    .header("Range", "bytes=2-5")
+                    .body(vec![])
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(response.body(), b"2345");
+        let code = owner.pairing_code().await.unwrap();
+        let invite = crate::pairing::Invitation {
+            version: 2,
+            url: owner.url.clone(),
+            code,
+            certificate: owner.certificate.clone(),
+            desktop: "Test desktop".into(),
+            mode: "local".into(),
+        };
+        let encoded = serde_json::to_string(&invite).unwrap();
+        assert!(crate::pairing::qr_uri(&encoded).is_ok());
+        let parsed = crate::pairing::Invitation::parse(&encoded).unwrap();
+        let paired = Connection::redeem_pairing(parsed.clone()).await.unwrap();
+        assert_eq!(paired.token, owner.token);
+        let (client, url) = paired.client().unwrap();
+        assert!(client
+            .get(url.join("/v1/health").unwrap())
+            .bearer_auth(&paired.token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        assert!(Connection::redeem_pairing(parsed).await.is_err());
+        let untrusted = Connection {
+            certificate: String::new(),
+            ..owner.clone()
+        };
+        assert!(untrusted.pairing_code().await.is_err());
+        let other =
+            tv_manager_server::host_library(folder.path().into(), "127.0.0.1".parse().unwrap())
+                .await
+                .unwrap();
+        let wrong = Connection {
+            certificate: base64::engine::general_purpose::STANDARD.encode(&other.certificate),
+            ..owner.clone()
+        };
+        assert!(wrong.pairing_code().await.is_err());
+        drop(host);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(paired.pairing_code().await.is_err());
+    }
 }

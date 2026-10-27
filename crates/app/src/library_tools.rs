@@ -63,29 +63,136 @@ pub fn Profiles(mut form: Signal<Form>, mut message: Signal<String>) -> Element 
 
 #[component]
 pub fn Pairing(
+    connection: Signal<Connection>,
+    form: Signal<Form>,
+    busy: Signal<bool>,
+    message: Signal<String>,
+) -> Element {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    return rsx! { MobilePairing { connection, form, busy, message } };
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = form;
+        rsx! { DesktopPairing { connection, busy, message } }
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[component]
+fn MobilePairing(
     mut connection: Signal<Connection>,
+    mut form: Signal<Form>,
+    mut busy: Signal<bool>,
+    mut message: Signal<String>,
+) -> Element {
+    rsx! { section { class: "settings-group pairing-panel",
+        h2 { "Pair a desktop" }
+        button { r#type: "button", class: "secondary", disabled: busy(), onclick: move |_| {
+            busy.set(true); message.set("Point the camera at the desktop pairing QR.".into());
+            spawn(async move {
+                let result = async {
+                    let invitation = pairing::scan_invitation().await?;
+                    let desktop = if invitation.desktop.is_empty() { "Desktop".to_string() } else { invitation.desktop.clone() };
+                    Ok::<_, anyhow::Error>((Connection::redeem_pairing(invitation).await?, desktop))
+                }.await;
+                match result {
+                    Ok((value, desktop)) => { connection.set(value); form.write().folder.clear(); message.set(format!("Paired with {desktop}. Choose naming settings and build a preview.")); }
+                    Err(error) => message.set(format!("Pairing failed: {error:#}")),
+                }
+                busy.set(false);
+            });
+        }, "Scan desktop QR code" }
+        p { class: "hint", "Scan a QR from Media Manager on your desktop. Local pairing uses the same network; remote pairing uses its HTTPS server." }
+    }}
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn lan_address() -> String {
+    (|| -> std::io::Result<String> {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+        socket.connect("192.0.2.1:80")?;
+        Ok(socket.local_addr()?.ip().to_string())
+    })()
+    .unwrap_or_default()
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[component]
+fn DesktopPairing(
+    connection: Signal<Connection>,
     mut busy: Signal<bool>,
     mut message: Signal<String>,
 ) -> Element {
     let mut qr = use_signal(String::new);
-    let mut invitation = use_signal(|| None::<pairing::Invitation>);
-    let mut text = use_signal(String::new);
-    rsx! {details {class:"feature-block",summary {"Pair another device"}
-        p {class:"hint","Connect through an HTTPS Media Manager server. Generate a code on a connected device, then import its QR image on your phone."}
-        if connection.read().remote {
-            button {r#type:"button",class:"secondary",disabled:busy(),onclick:move |_|{let c=connection();busy.set(true);spawn(async move{
-                let result=async {pairing::Invitation::parse(&serde_json::to_string(&pairing::Invitation{version:1,url:c.url.clone(),code:uuid::Uuid::nil().to_string()})?)?;let code=c.pairing_code().await?;let invite=pairing::Invitation{version:1,url:c.url.clone(),code};let data=serde_json::to_string(&invite)?;pairing::Invitation::parse(&data)?;pairing::qr_uri(&data)}.await;
-                match result {Ok(uri)=>{qr.set(uri);message.set("Pairing QR is valid for five minutes and one use.".into());},Err(e)=>message.set(format!("{e:#}"))}busy.set(false);
-            });},"Generate pairing QR"}
+    let mut mode = use_signal(|| "local".to_string());
+    let mut address = use_signal(lan_address);
+    let mut host = use_signal(|| None::<std::sync::Arc<tv_manager_server::LocalHost>>);
+    let mut hosted_key = use_signal(String::new);
+    let mut expires = use_signal(|| None::<std::time::Instant>);
+    let mut remaining = use_signal(|| 0_u64);
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let seconds = expires()
+                .map(|deadline| {
+                    deadline
+                        .saturating_duration_since(std::time::Instant::now())
+                        .as_secs()
+                })
+                .unwrap_or(0);
+            remaining.set(seconds);
+            if seconds == 0 {
+                qr.set(String::new());
+            }
         }
-        if !qr().is_empty(){img {class:"pairing-qr",src:qr(),alt:"Single-use Media Manager pairing QR"}p {class:"hint","Expires after five minutes. Share only with the device you want to connect."}}
-        button {r#type:"button",class:"secondary",disabled:busy(),onclick:move |_|{busy.set(true);spawn(async move{match pairing::pick_invitation().await{Ok(value)=>invitation.set(Some(value)),Err(e)=>message.set(e.to_string())}busy.set(false);});},"Import pairing QR image"}
-        label {"Or paste pairing invitation" textarea {rows:"2",value:text(),oninput:move|e|text.set(e.value())}}
-        button {r#type:"button",class:"secondary",disabled:busy()||text().is_empty(),onclick:move |_|match pairing::Invitation::parse(&text()){Ok(value)=>invitation.set(Some(value)),Err(e)=>message.set(e.to_string())},"Review invitation"}
-        if let Some(value)=invitation(){
-            p {"Connect to {value.url}?"}
-            button {r#type:"button",class:"primary",disabled:busy(),onclick:move |_|{let value=value.clone();busy.set(true);spawn(async move{match Connection::redeem_pairing(value.url,value.code).await{Ok(c)=>{connection.set(c);invitation.set(None);message.set("Device paired. Choose the server subfolder and build a preview.".into());},Err(e)=>message.set(e.to_string())}busy.set(false);});},"Confirm pairing"}
+    });
+    rsx! { section { class: "settings-group pairing-panel",
+        h2 { "Pair a mobile device" }
+        label { "Connection" select { value: mode(), onchange: move |e| { mode.set(e.value()); qr.set(String::new()); },
+            option { value: "local", "Local network" }
+            option { value: "remote", "Remote HTTPS server" }
+        }}
+        if mode() == "local" {
+            label { "Desktop LAN address" input { value: address(), placeholder: "192.168.1.10", oninput: move |e| { address.set(e.value()); qr.set(String::new()); } } }
+            p { class: "hint", "Use the same network on your phone. Generating a QR starts an encrypted server for the selected media root. Keep this app open. Allow the app through your private-network firewall if prompted." }
+        } else {
+            p { class: "hint", "Select Remote server under Connect your library and configure its HTTPS URL and bearer token first." }
         }
+        button { r#type: "button", class: "secondary", disabled: busy(), onclick: move |_| {
+            let original = connection(); let selected_mode = mode(); let ip_text = address();
+            qr.set(String::new()); busy.set(true);
+            spawn(async move {
+                let result = async {
+                    let c = if selected_mode == "local" {
+                        use base64::Engine;
+                        anyhow::ensure!(!original.remote, "Select This device under Connect your library before local sharing");
+                        let ip = ip_text.trim().parse::<std::net::IpAddr>().map_err(|_| anyhow::anyhow!("Enter the desktop LAN IP address"))?;
+                        anyhow::ensure!(pairing::is_local(ip) && !ip.is_loopback(), "Use a private LAN address reachable from your phone");
+                        let key = format!("{}|{ip}", original.root);
+                        if host().is_none() || hosted_key() != key {
+                            host.set(None);
+                            let local = tv_manager_server::host_library(original.root.clone().into(), ip).await?;
+                            host.set(Some(std::sync::Arc::new(local))); hosted_key.set(key);
+                        }
+                        let local = host().ok_or_else(|| anyhow::anyhow!("Local host unavailable"))?;
+                        Connection { remote: true, url: local.url.clone(), token: local.token.clone(), certificate: base64::engine::general_purpose::STANDARD.encode(&local.certificate), ..Connection::default() }
+                    } else {
+                        anyhow::ensure!(original.remote && original.url.starts_with("https://"), "Configure a remote HTTPS server first");
+                        original
+                    };
+                    let invitation = pairing::Invitation { version: 2, url: c.url.clone(), code: c.pairing_code().await?, certificate: c.certificate.clone(), desktop: std::env::var("COMPUTERNAME").or_else(|_|std::env::var("HOSTNAME")).unwrap_or_else(|_|"Media Manager desktop".into()).chars().take(80).collect(), mode: selected_mode };
+                    let text = serde_json::to_string(&invitation)?; pairing::Invitation::parse(&text)?;
+                    pairing::qr_uri(&text)
+                }.await;
+                match result {
+                    Ok(uri) => { qr.set(uri); expires.set(Some(std::time::Instant::now()+std::time::Duration::from_secs(300))); remaining.set(300); message.set("Scan this QR using Media Manager on your phone.".into()); }
+                    Err(error) => message.set(format!("Pairing setup failed: {error:#}")),
+                }
+                busy.set(false);
+            });
+        }, "Generate pairing QR" }
+        if !qr().is_empty() { img { class: "pairing-qr", src: qr(), alt: "Single-use desktop pairing QR code" } p { class: "hint", "Expires in {remaining} seconds. One phone per QR." } }
+        if host().is_some() { button { r#type: "button", class: "secondary", disabled: busy(), onclick: move |_| { host.set(None); qr.set(String::new()); expires.set(None); message.set("Local sharing stopped. Paired phones can no longer access this host.".into()); }, "Stop local sharing" } }
     }}
 }
 
