@@ -192,6 +192,12 @@ fn App() -> Element {
     use_future(move || async move {
         // Yield to the first render so the splash can paint before disk/decryption work.
         tokio::task::yield_now().await;
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if let Err(error) = mobile_storage::initialize_settings().await {
+            message.set(format!("Could not open app settings: {error:#}"));
+            persistence_ready.set(true);
+            return;
+        }
         let saved = tokio::task::spawn_blocking(session::load).await;
         match saved {
             Ok(Ok(previous)) => {
@@ -655,7 +661,7 @@ fn App() -> Element {
                         }
                     }
                 }
-            footer { class: "apply-bar", role: "toolbar", "aria-label": "Library actions",
+            if plan.read().is_some() { footer { class: "apply-bar", role: "toolbar", "aria-label": "Library actions",
                 div {
                     strong { "{ready} renames · {poster_count} poster downloads ready" }
                     p { class: "hint", "Review before applying. Rename history keeps original names for Undo." }
@@ -663,12 +669,12 @@ fn App() -> Element {
                 div { class: "apply-actions",
                     button { class: "secondary single-column-only", r#type: "button", "aria-controls": "poster-naming-settings", onclick: move |_| active_panel.set("posters"), "← Back" }
                     button { class: "primary", disabled: !can_apply, onclick: move |_| confirming.set(true),
-                        if poster_count > 0 { "Apply renames & posters" } else { "Rename {ready} files" }
+                        if poster_count > 0 { "Apply renames & posters" } else if ready==1 {"Rename 1 file"} else { "Rename {ready} files" }
                     }
                 }
-            }
+            } }
                 }
-                div { class: "resize-handle right-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize posters", "aria-controls": "poster-naming-settings",
+                div { class: "resize-handle right-resizer", role: "separator", tabindex: "0", "aria-orientation": "vertical", "aria-label": "Resize preview sidebar", "aria-controls": "poster-naming-settings",
                     "aria-valuemin": "260", "aria-valuemax": "480", "aria-valuenow": "{right_width}",
                     onpointerdown: move |e| { e.prevent_default(); drag.set(Some(PanelDrag { right: true, x: e.client_coordinates().x, width: right_width() })); },
                     ondoubleclick: move |_| right_width.set(300.0),
@@ -711,7 +717,7 @@ fn App() -> Element {
                     }
                     library_tools::ArtworkPicker {form,connection,plan,snapshot,busy,message}
                     if cfg!(any(target_os = "android", target_os = "ios")) {
-                        ads::NativeAdSlot { posters: true }
+                        div {class:"poster-ad",ads::NativeAdSlot { posters: true }}
                     }
                     nav { class: "poster-navigation single-column-only", "aria-label": "Preview steps",
                         button { class: "secondary", r#type: "button", disabled: busy() || confirming(), "aria-controls": "library-settings", onclick: move |_| active_panel.set("settings"), "← Back" }

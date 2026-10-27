@@ -337,6 +337,9 @@ private class LocalStorage(private val activity: MainActivity) {
         activity.runOnUiThread { web.evaluateJavascript(script, null) }
     }
     fun handle(command: JSONObject, web: WebView) {
+        if (command.optString("op") == "appDirectories") {
+            reply(web,command,JSONObject().put("state",activity.filesDir.absolutePath));return
+        }
         if (command.optString("op") == "scanPairing") {
             if (pending != null) { reply(web, command, JSONObject().put("error", "Close the current scanner or picker first")); return }
             pending = Pair(command, web)

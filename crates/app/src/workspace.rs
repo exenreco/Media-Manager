@@ -131,7 +131,7 @@ pub fn Navigation(mut active: Signal<&'static str>) -> Element {
             }
             span {class:"rail-version","MM"}
         }
-        div {class:if expanded(){"mobile-dock expanded"}else{"mobile-dock"},
+        div {class:if expanded(){"mobile-dock expanded"}else{"mobile-dock"},onkeydown:move|e|{if e.key()==Key::Escape {expanded.set(false);}},
             nav {class:"dock-grid","aria-label":"All workspace tools","inert":(!expanded()).then_some(""),
                 for (view,icon,label) in DESTINATIONS {
                     button {class:if active()==view {"dock-tool active"}else{"dock-tool"},onclick:move|_|{active.set(view);expanded.set(false);},Icon {name:icon} span {"{label}"}}
@@ -139,7 +139,7 @@ pub fn Navigation(mut active: Signal<&'static str>) -> Element {
             }
             nav {class:"dock-bar","aria-label":"Mobile navigation",
                 for (view,icon,label) in [("preview","library","Library"),("settings","folder","Connect"),("posters","posters","Artwork"),("inspector","play","Preview")] {
-                    button {class:if active()==view {"dock-tab active"}else{"dock-tab"},onclick:move|_|{active.set(view);expanded.set(false);},Icon {name:icon} span {"{label}"}}
+                    button {class:if active()==view {"dock-tab active"}else{"dock-tab"},tabindex:if expanded(){"-1"}else{"0"},"aria-hidden":expanded().to_string(),onclick:move|_|{active.set(view);expanded.set(false);},Icon {name:icon} span {"{label}"}}
                 }
                 button {class:"dock-more","aria-label":if expanded(){"Close tools"}else{"Expand tools"},"aria-expanded":expanded().to_string(),onclick:move|_|expanded.toggle(),Icon {name:if expanded(){"close"}else{"add"}}}
             }
@@ -211,7 +211,7 @@ pub fn Inspector(
             p {class:"inspector-filename",title:"{task.source.display()}","{task.source.file_name().unwrap_or_default().to_string_lossy()}"}
             label {"Selected item title" input {value:"{draft}",disabled:disabled || busy(),oninput:move|e|draft.set(e.value()),placeholder:"Enter a title"}}
             p {class:"hint","The extension is kept. Save updates the preview; Apply renames changes the file."}
-            button {class:"secondary",disabled:disabled || busy() || draft().trim().is_empty(),onclick:move|_|{
+            button {class:"secondary",disabled:disabled || busy() || draft().trim().is_empty() || task.target.file_stem().and_then(|s|s.to_str())==Some(draft().trim()),onclick:move|_|{
                 let Some(index)=selected() else{return;}; let Some(p)=plan.read().clone() else{return;};
                 let extension=p.tasks[index].target.extension().map(|e|format!(".{}",e.to_string_lossy())).unwrap_or_default();
                 let filename=format!("{}{extension}",draft().trim());

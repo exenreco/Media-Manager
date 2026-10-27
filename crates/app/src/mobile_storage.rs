@@ -48,6 +48,16 @@ async fn command(value: Value) -> Result<Value> {
     Ok(response)
 }
 
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub async fn initialize_settings() -> Result<()> {
+    let result = command(json!({"op":"appDirectories"})).await?;
+    crate::session::initialize_mobile(PathBuf::from(
+        result["state"]
+            .as_str()
+            .context("Native settings directory unavailable")?,
+    ))
+}
+
 pub async fn pick() -> Result<String> {
     let result = command(json!({"op":"pick"})).await?;
     Ok(result["root"]

@@ -57,3 +57,21 @@ button{font-size:12px;border-radius:6px;transition:background .18s,color .18s,tr
  .expanded .dock-grid{padding:15px 8px 18px;border-width:1px;max-height:320px;overflow-y:auto}.expanded .dock-bar{height:0;padding:0;border-width:0;background:transparent}.expanded .dock-tab{opacity:0;pointer-events:none;height:0;overflow:hidden;padding:0}.expanded .dock-more{bottom:0}
  .dock-tool{font-size:8px;gap:6px}.dock-tool svg{width:20px;height:20px;padding:12px;border-radius:15px}
 }
+
+@media(min-width:761px){
+ .desktop-rail{width:76px;transition:width .28s cubic-bezier(.2,.8,.2,1);box-shadow:12px 0 28px #0000}
+ .desktop-rail:hover,.desktop-rail:focus-within{width:184px;box-shadow:12px 0 28px #0004}
+ .rail-item{min-height:44px;flex-direction:row;justify-content:flex-start;gap:13px;padding:12px 17px;flex-shrink:0;overflow:visible}
+ .rail-item svg{flex-shrink:0}.rail-item span{opacity:0;max-width:0;overflow:hidden;white-space:nowrap;font-size:11px;transition:opacity .2s,max-width .28s}
+ .desktop-rail:hover .rail-item span,.desktop-rail:focus-within .rail-item span{opacity:1;max-width:130px}
+ .rail-mark{justify-items:start;padding-left:15px}.rail-version{text-align:left;padding-left:23px}
+}
+.video-stage video{animation:content-in .24s ease both}
+.window-edge{touch-action:none;user-select:none}
+
+/* Compact artwork cards keep titles readable instead of wrapping one letter at a time. */
+.poster-card.compact figcaption{display:none}.poster-card:not(.compact) figcaption .hint{display:block;margin-top:5px;font-size:10px;color:#707070}.carousel-track{gap:12px}
+
+@media(max-width:760px){main[data-view=inspector] .poster-ad{display:none}}
+
+@media(max-width:760px){.expanded .dock-bar{visibility:hidden;min-height:0;border:0!important;outline:0;box-shadow:none}.expanded .dock-more{visibility:visible}}

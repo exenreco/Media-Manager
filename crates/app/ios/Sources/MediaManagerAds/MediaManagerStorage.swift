@@ -44,6 +44,13 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
               url.scheme == "dioxus", url.host == "index.html",
               let text = message.body as? String, let bytes = text.data(using: .utf8),
               let command = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else { return }
+        if command["op"] as? String == "appDirectories" {
+            do {
+                let state = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                reply(command, ["state": state.path])
+            } catch { reply(command, ["error": error.localizedDescription]) }
+            return
+        }
         if command["op"] as? String == "scanPairing" {
             guard pending == nil, let controller, controller.presentedViewController == nil else { reply(command, ["error": "Close the current dialog before scanning"]); return }
             pending = command

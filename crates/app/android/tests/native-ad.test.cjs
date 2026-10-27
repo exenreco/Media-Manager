@@ -124,3 +124,15 @@ test('moves the native view to the poster placement when the library is hidden',
   h.window.mediaManagerAdSetHidden(false);
   h.tick(); assert.equal(h.messages.at(-1).visible, true);
 });
+
+
+test('floating navigation and expanded tools cannot be covered by a native ad', () => {
+  const h = harness();
+  const dock = {getBoundingClientRect:() => ({top:400,bottom:780,left:20,right:380})};
+  let expanded = false;
+  h.document.querySelector = selector => selector === '.mobile-dock' ? dock : selector === '.mobile-dock.expanded' && expanded ? {} : null;
+  h.tick(); assert.equal(h.messages.at(-1).visible, false);
+  h.rect.bottom=390; h.tick(); assert.equal(h.messages.at(-1).visible, true);
+  expanded=true; h.tick(); assert.equal(h.messages.at(-1).eligible, false);
+  assert.equal(h.messages.at(-1).visible, false);
+});
