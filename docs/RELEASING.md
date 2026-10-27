@@ -6,7 +6,7 @@ The `Platform releases` workflow runs when a version tag such as `v0.1.0` is pus
 It can also rebuild an existing tag through Actions → Platform releases → Run workflow;
 choose all platforms, desktop, Windows, Linux runtime, Android or iOS when retrying packaging.
 The application source is always checked out at the requested tag. Mobile, Windows
-and managed Linux runtime packaging helpers come from the workflow revision, so packaging-only
+and desktop/managed Linux runtime packaging helpers come from the workflow revision, so packaging-only
 repairs can rebuild an existing version without moving its tag.
 The tag must exactly match `[workspace.package].version` in Cargo.toml.
 
@@ -24,9 +24,12 @@ The workflow publishes no signing secrets and does not force-push or move tags.
 | Asset | Build host / target | Distribution |
 | --- | --- | --- |
 | Windows x64 ZIP | windows-latest / native x64 | Conditional, verified Authenticode signing; unsigned until configured |
+| Windows x64 setup EXE | windows-latest / Inno Setup 6 | Per-user install, shortcuts, uninstall and WebView2 bootstrapper; conditional publisher signing |
 | macOS ARM64 ZIP | macos-15 / Apple Silicon | Ad-hoc signed app bundle and server |
 | macOS Intel ZIP | macos-15-intel / x64 | Ad-hoc signed app bundle and server |
+| macOS ARM64 / Intel PKG | corresponding native macOS runner | Installs app and bundled server in /Applications; unsigned installer |
 | Linux x64 TAR.GZ | ubuntu-24.04 / x64 | Portable binaries; GTK/WebKitGTK runtime required |
+| Linux x64 DEB | ubuntu-24.04 / x64 | Native dependencies discovered by dpkg-shlibdeps; installs launcher, icon and server |
 | Linux x64 Flatpak | ubuntu-24.04 / GNOME 49 | Managed GTK/WebKitGTK runtime; startup checked under Xvfb |
 | Android ARM64 APK | ubuntu-24.04 / aarch64-linux-android | Debug-signed preview, Google test ads |
 | iOS ARM64 Simulator ZIP | macos-15 / aarch64-apple-ios-sim | Simulator only, ad-hoc signed, Google test ads |
@@ -48,7 +51,8 @@ and mobile artifacts receive SHA-256 checksum files on the release page.
   be renamed to IPA or installed on an iPhone.
 - macOS: Developer ID signing and notarization before public production distribution.
 - Windows: activate publisher signing in `.github/workflows/release.yml`
-  after identity validation; optional installer packaging remains separate.
+  after identity validation. Both payload executables and the setup EXE are signed
+  when enabled; the setup checksum is regenerated after signing.
 - All platforms: native acceptance tests, mobile document/background bridges,
   privacy disclosures, SDK policy review and store approval where applicable.
 
@@ -66,3 +70,21 @@ prove mobile device behavior or policy approval.
 
 See [managed Linux runtime packaging](LINUX_RUNTIME.md) for Flatpak installation,
 permissions, runtime updates and source archives for redistributed libraries.
+
+## Desktop installer validation
+
+The `Desktop installer validation` workflow can be dispatched manually or run on
+`codex/installer-validation-*` branches. It builds native release binaries and
+installers on Windows, Apple Silicon macOS, Intel macOS and Ubuntu 24.04, without
+publishing a GitHub release. Windows checks installation, reinstall/upgrade,
+startup and uninstall in a disposable runner. macOS checks installation, bundle
+signature integrity and reinstall. Linux checks dependency installation, desktop
+entry validation, startup under Xvfb and package removal. These checks do not
+establish publisher trust, notarization or acceptance on every Linux distribution.
+
+Local builds run `scripts/package_desktop.py` first, then
+`scripts/package_installer.py` with the same platform, architecture and version.
+Windows also requires Inno Setup 6.3+ and a verified WebView2 bootstrapper;
+`scripts/prepare_windows_installer.ps1` provisions them on the CI runner. macOS
+uses the built-in pkgbuild/codesign tools. Linux requires dpkg-dev and the native
+development libraries used to build the application.

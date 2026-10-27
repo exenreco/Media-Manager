@@ -49,10 +49,25 @@ impl Session {
     }
 }
 
+#[cfg(any(target_os = "android", target_os = "ios"))]
+static MOBILE_STATE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn initialize_mobile(path: PathBuf) -> Result<()> {
+    anyhow::ensure!(path.is_absolute(), "Native settings directory is invalid");
+    let _ = MOBILE_STATE.set(path);
+    Ok(())
+}
+
 pub(crate) fn path() -> Result<PathBuf> {
     if let Some(directory) = std::env::var_os("MEDIA_MANAGER_STATE_DIR") {
         return Ok(PathBuf::from(directory).join(filename()));
     }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let directory = MOBILE_STATE
+        .get()
+        .context("Native settings directory is not ready")?
+        .clone();
     #[cfg(windows)]
     let directory = PathBuf::from(
         std::env::var_os("LOCALAPPDATA").context("Local app data directory unavailable")?,
@@ -61,7 +76,7 @@ pub(crate) fn path() -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     let directory = PathBuf::from(std::env::var_os("HOME").context("Home directory unavailable")?)
         .join("Library/Application Support/MediaManager");
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "android", target_os = "ios")))]
     let directory = if let Some(state) = std::env::var_os("XDG_STATE_HOME") {
         PathBuf::from(state).join("MediaManager")
     } else {

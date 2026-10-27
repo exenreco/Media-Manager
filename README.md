@@ -17,7 +17,7 @@ controlling a library from another device.
 - TV-show and movie modes, optional season selection, Plex/Jellyfin naming and custom templates.
 - Season tables with missing episodes, filename edits and media playback.
 - Show/season poster previews and optional downloads that preserve existing images.
-- Resizable desktop panels; Back/Next steps guide single-column windows through settings, posters and preview.
+- Working source: icon rail, custom desktop title bar, inline video/title inspector, and an expanding mobile tool menu.
 - Local libraries or an authenticated remote library server.
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.
@@ -36,9 +36,9 @@ build is not a substitute for native UI and device testing.
 
 | Platform | Release artifact | Current limits |
 | --- | --- | --- |
-| Windows x64 | Portable ZIP, app and server | Requires Windows native prerequisites and WebView2 |
-| macOS Apple Silicon / Intel | ZIP with app bundle and server | Ad-hoc signed; not Developer ID signed or notarized |
-| Linux x64 | Flatpak with managed runtime, or TAR.GZ | Flatpak uses GNOME 49 GTK/WebKitGTK; TAR.GZ requires host libraries |
+| Windows x64 | Setup EXE and portable ZIP | Setup installs WebView2 if missing; publisher signing depends on release configuration |
+| macOS Apple Silicon / Intel | PKG installer and portable ZIP | Ad-hoc signed app; installer is not Developer ID signed or notarized |
+| Linux x64 | DEB, Flatpak with managed runtime, or TAR.GZ | DEB targets Ubuntu 24.04+ compatible systems; Flatpak supplies GTK/WebKitGTK |
 | Android ARM64 | Installable debug-signed preview APK | Test ads; new native folder access awaits device validation; background execution pending |
 | iOS ARM64 Simulator | Simulator app ZIP | For Xcode Simulator, not an installable iPhone IPA; device signing remains pending |
 
@@ -52,6 +52,10 @@ playback. Both mobile integrations have compiled in native CI; device/provider
 validation is still pending. Mobile background jobs and notifications remain unfinished.
 
 Download the [v0.1.4 previews](https://github.com/exenreco/Media-Manager/releases/tag/v0.1.4).
+
+Installer packaging is prepared for the next release; existing v0.1.4 assets are
+unchanged until rebuilt and published. See [desktop installation](docs/INSTALLATION.md)
+for setup, upgrade, removal, and runtime requirements.
 Platform assets and checksums appear as their native CI jobs finish. Mobile device
 acceptance tests and production/store signing are still pending.
 
