@@ -3,7 +3,7 @@
   window.mediaManagerFullscreenCleanup?.();
   let bridge, timer, stopped = false, initialized = false;
   let state = {adFreeUntil:0, presenting:false, rewardedReady:false, message:''};
-  const blocked = () => document.hidden || !!document.querySelector('.overlay, dialog[open], main[data-preview-sheet], main[data-menu-sheet], .mobile-dock.expanded, [aria-busy="true"]') ||
+  const blocked = () => window.mediaManagerNativePlaybackActive || document.hidden || !!document.querySelector('.overlay, dialog[open], main[data-preview-sheet], main[data-menu-sheet], .mobile-dock.expanded, [aria-busy="true"]') ||
     [...document.querySelectorAll('video')].some(video => !video.paused && !video.ended);
   const send = type => bridge?.postMessage(JSON.stringify({type}));
   const render = () => {

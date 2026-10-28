@@ -94,6 +94,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Install synthetic playback fixture tools
+        if: matrix.target == 'x86_64-linux-android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - name: Install and launch in Android emulator
         if: matrix.target == 'x86_64-linux-android'
         uses: reactivecircus/android-emulator-runner@v2
@@ -103,7 +108,10 @@ jobs:
           arch: x86_64
           profile: pixel_7_pro
           disable-animations: true
-          script: python3 scripts/mobile_smoke.py --platform android --app "$SMOKE_APK" --evidence target/mobile-validation/android
+          script: |
+            python3 scripts/mobile_smoke.py --platform android --app "$SMOKE_APK" --evidence target/mobile-validation/android
+            python3 scripts/android_playback_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --inline --codec h264 --evidence target/mobile-validation/android/h264-inline
+            python3 scripts/android_playback_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --inline --codec h264-10bit --evidence target/mobile-validation/android/h264-10bit-inline
       - uses: actions/upload-artifact@v4
         if: always()
         with:

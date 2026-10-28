@@ -66,7 +66,12 @@ class MainActivity : WryActivity() {
                 val fixture=java.io.File(filesDir,"compatibility-fixture.mp4")
                 if(fixture.isFile) {
                     val prepared=mediaPreviews.local(android.net.Uri.fromFile(fixture),fixture.length(),"video/mp4")
-                    mediaPreviews.play("/native-media-preview/"+prepared.getString("token"))
+                    val source="/native-media-preview/"+prepared.getString("token")
+                    if (intent.getBooleanExtra("media_manager_inline_fixture",false)) {
+                        mediaPreviews.inline(JSONObject().put("source",source).put("visible",true)
+                            .put("x",16).put("y",160).put("width",webView.width-32)
+                            .put("height",webView.width*0.6).put("viewportWidth",webView.width),webView)
+                    } else mediaPreviews.play(source)
                 }
             },1500)
         }
@@ -358,6 +363,11 @@ private class LocalStorage(private val activity: MainActivity, private val media
         activity.runOnUiThread { web.evaluateJavascript(script, null) }
     }
     fun handle(command: JSONObject, web: WebView) {
+        if (command.optString("op") == "inlineMediaBounds") {
+            runCatching { mediaPreviews.inline(command, web) }
+                .onFailure { android.util.Log.w("MediaManagerPlayback", "Inline player unavailable", it) }
+            return
+        }
         if (command.optString("op") == "appDirectories") {
             reply(web,command,JSONObject().put("state",activity.filesDir.absolutePath));return
         }
@@ -738,8 +748,30 @@ private class MediaPreviews(private val activity: MainActivity) {
     private val sources = java.util.concurrent.ConcurrentHashMap<String, Source>()
     private val streams = java.util.Collections.synchronizedSet(mutableSetOf<java.io.InputStream>())
     private var supported = false
+    private var browser: WebView? = null
     private var compatible: CompatiblePreview? = null
+    fun inline(command: JSONObject, web: WebView) {
+        activity.runOnUiThread {
+            val source = command.optString("source")
+            val token = source.removePrefix("/native-media-preview/")
+            if (source.isEmpty()) {
+                if (compatible?.inline == true) {compatible?.close(); compatible = null}
+                return@runOnUiThread
+            }
+            if (source != "/native-media-preview/$token" || !sources.containsKey(token)) return@runOnUiThread
+            // Fullscreen playback keeps ownership until its dialog is closed.
+            if (compatible?.inline == false && compatible?.isClosed == false) return@runOnUiThread
+            if (compatible?.token != token || compatible?.isClosed != false) {
+                compatible?.close(); compatible = null
+                if (!command.optBoolean("visible")) return@runOnUiThread
+                compatible = CompatiblePreview(activity, token, ::response, web).also { it.show() }
+            }
+            compatible?.position(command)
+        }
+    }
     fun attach(web: WebView) {
+        browser = web
+        supported = true
         if (android.os.Build.VERSION.SDK_INT < 26) return
         val original = web.webViewClient
         web.webViewClient = object : android.webkit.WebViewClient() {
@@ -763,8 +795,11 @@ private class MediaPreviews(private val activity: MainActivity) {
         val token = source.removePrefix("/native-media-preview/")
         require(source == "/native-media-preview/$token" && sources.containsKey(token)) { "Preview expired; select the file again" }
         activity.runOnUiThread {
+            if (!sources.containsKey(token)) return@runOnUiThread
             compatible?.close()
-            compatible = CompatiblePreview(activity, token, ::response).also { it.show() }
+            compatible = CompatiblePreview(activity, token, ::response, onClosed = {
+                activity.runOnUiThread {browser?.evaluateJavascript("window.mediaManagerInlineRefresh?.()",null)}
+            }).also { it.show() }
         }
     }
     fun pause(){activity.runOnUiThread {compatible?.pause()}}
@@ -790,7 +825,7 @@ private class MediaPreviews(private val activity: MainActivity) {
         return register(Source(null,url.toString(),tls,command.getLong("size"),command.getString("mime")))
     }
     private fun register(source: Source): JSONObject {
-        require(supported) { "Inline preview requires Android 8 or newer. Open the file with your device video app." }
+        require(supported) { "The preview player is not attached yet. Select the file again." }
         require(source.size > 0) { "Empty media file" }
         clear()
         val token = java.util.UUID.randomUUID().toString(); sources[token] = source
@@ -855,9 +890,14 @@ internal fun previewRange(value:String?,size:Long):Pair<Long,Long> {
 /** libVLC decoding stays out of the WebView. The loopback gateway preserves pinned TLS upstream. */
 private class CompatiblePreview(
     private val activity: MainActivity,
-    private val token: String,
-    private val response: (android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse
+    val token: String,
+    private val response: (android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse,
+    private val inlineWeb: WebView? = null,
+    private val onClosed: () -> Unit = {}
 ) {
+    val inline get() = inlineWeb != null
+    val isClosed get() = closed
+    private var root: LinearLayout? = null
     private val dialog = android.app.Dialog(activity)
     private val server = java.net.ServerSocket(0, 4, java.net.InetAddress.getByName("127.0.0.1"))
     private val workers = java.util.concurrent.ThreadPoolExecutor(2,2,0L,java.util.concurrent.TimeUnit.SECONDS,java.util.concurrent.ArrayBlockingQueue<Runnable>(4))
@@ -868,9 +908,13 @@ private class CompatiblePreview(
     @Volatile private var closed = false
     fun show() {
         try {
+            if(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false)) {
+                java.io.File(activity.filesDir,"compatibility-fixture-events.txt").appendText(if(inline)"mode:inline\n" else "mode:fullscreen\n")
+            }
             val engine=org.videolan.libvlc.LibVLC(activity,arrayListOf("--no-video-title-show","--network-caching=1000"));lib=engine
             val mediaPlayer=org.videolan.libvlc.MediaPlayer(engine);player=mediaPlayer
             val column=LinearLayout(activity).apply {orientation=LinearLayout.VERTICAL;setBackgroundColor(Color.BLACK)}
+            root = column
             val status=TextView(activity).apply {text="Preparing compatibility player…";setTextColor(Color.WHITE);setPadding(16,16,16,16)}
             val video=org.videolan.libvlc.util.VLCVideoLayout(activity)
             column.addView(video,LinearLayout.LayoutParams(-1,0,1f));column.addView(status)
@@ -879,12 +923,24 @@ private class CompatiblePreview(
             val controls=LinearLayout(activity).apply {gravity=Gravity.CENTER}
             val pause=Button(activity).apply {text="Pause";setOnClickListener {if(mediaPlayer.isPlaying){mediaPlayer.pause();text="Play"}else{mediaPlayer.play();text="Pause"}}}
             controls.addView(pause)
-            controls.addView(Button(activity).apply {text="Close";setOnClickListener {close()}})
+            if (!inline) controls.addView(Button(activity).apply {text="Close";setOnClickListener {close()}})
             column.addView(controls)
+            if (inline) {
+                status.textSize=11f;status.setPadding(8,0,8,0)
+                pause.textSize=12f;pause.minHeight=0;pause.minimumHeight=0;pause.setPadding(12,0,12,0)
+                val controlHeight=(40*activity.resources.displayMetrics.density).roundToInt()
+                column.removeView(seek)
+                controls.addView(seek,0,LinearLayout.LayoutParams(0,controlHeight,1f))
+                pause.layoutParams=LinearLayout.LayoutParams(-2,controlHeight)
+                column.visibility=View.GONE
+                activity.findViewById<FrameLayout>(android.R.id.content).addView(column,FrameLayout.LayoutParams(1,1))
+            } else {
             dialog.setContentView(column);dialog.setOnDismissListener {close()}
             dialog.show();dialog.window?.setLayout(-1,-1)
             dialog.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            mediaPlayer.attachViews(video,null,true,false)
+            }
+            // TextureView stays inside the inline bounds and follows sheet animations.
+            mediaPlayer.attachViews(video,null,true,inline)
             mediaPlayer.setEventListener {event ->
                 if(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false)) {
                     val state=when(event.type){
@@ -897,7 +953,8 @@ private class CompatiblePreview(
                     if(state.isNotEmpty())java.io.File(activity.filesDir,"compatibility-fixture-events.txt").appendText("$state\n")
                 }
                 when(event.type) {
-                    org.videolan.libvlc.MediaPlayer.Event.Playing -> {status.text="Compatibility player";pause.text="Pause"}
+                    org.videolan.libvlc.MediaPlayer.Event.Playing -> {status.text=if(inline)"Video preview" else "Compatibility player";pause.text="Pause";if(inline && root?.visibility!=View.VISIBLE)mediaPlayer.pause()}
+                    org.videolan.libvlc.MediaPlayer.Event.Paused -> {status.text="Paused";pause.text="Play"}
                     org.videolan.libvlc.MediaPlayer.Event.EncounteredError -> status.text="Playback failed. The file may be damaged, protected, or the connection interrupted."
                     org.videolan.libvlc.MediaPlayer.Event.EndReached -> {status.text="Playback finished";pause.text="Play"}
                     org.videolan.libvlc.MediaPlayer.Event.Buffering -> status.text="Buffering ${event.buffering.toInt()}%"
@@ -914,17 +971,40 @@ private class CompatiblePreview(
             media.setHWDecoderEnabled(true,false);mediaPlayer.media=media;media.release();mediaPlayer.play()
         }catch(error:Exception){android.util.Log.w("MediaManagerPlayback","Compatibility player initialization failed",error);close();android.widget.Toast.makeText(activity,"Could not start compatibility player",android.widget.Toast.LENGTH_LONG).show()}
     }
+    fun position(bounds: JSONObject) {
+        val web=inlineWeb ?: return
+        val view=root ?: return
+        val viewport=bounds.optDouble("viewportWidth",0.0)
+        val raw=listOf("x","y","width","height").map {bounds.optDouble(it,Double.NaN)}
+        if (!bounds.optBoolean("visible") || viewport<=0 || !viewport.isFinite() || raw.any{!it.isFinite()} || web.width<=0) {
+            view.visibility=View.GONE;player?.pause();return
+        }
+        val scale=web.width/viewport
+        val (x,y,width,height)=raw.map{(it*scale).roundToInt()}
+        if (x<0 || y<0 || width<1 || height<1 || x.toLong()+width>web.width+1L || y.toLong()+height>web.height+1L) {
+            view.visibility=View.GONE;player?.pause();return
+        }
+        val parent=activity.findViewById<FrameLayout>(android.R.id.content)
+        val origin=IntArray(2);val parentOrigin=IntArray(2)
+        web.getLocationInWindow(origin);parent.getLocationInWindow(parentOrigin)
+        view.layoutParams=FrameLayout.LayoutParams(width,height).apply {
+            leftMargin=origin[0]-parentOrigin[0]+x;topMargin=origin[1]-parentOrigin[1]+y
+        }
+        view.visibility=View.VISIBLE
+    }
     fun pause(){player?.pause()}
     fun close(){
         if(closed)return;closed=true
         handler.removeCallbacksAndMessages(null)
         runCatching {server.close()};synchronized(sockets){sockets.toList().forEach{runCatching{it.close()}};sockets.clear()}
         workers.shutdownNow()
+        root?.let {(it.parent as? android.view.ViewGroup)?.removeView(it)};root=null
         val oldPlayer=player;val oldEngine=lib;player=null;lib=null
         oldPlayer?.setEventListener(null);oldPlayer?.detachViews()
         // Native stop may wait for decoder/network teardown; never wait on the UI thread.
         Thread({runCatching {oldPlayer?.stop()};runCatching {oldPlayer?.release()};runCatching {oldEngine?.release()}},"media-preview-release").start()
         dialog.dismiss()
+        onClosed()
     }
     private fun serve(socket:java.net.Socket){
         try{socket.use {

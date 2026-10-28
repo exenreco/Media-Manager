@@ -12,7 +12,7 @@ extern "Swift" {
 }
 
 #[component]
-fn NativeAdBridge() -> Element {
+pub fn NativeAdBridge() -> Element {
     #[cfg(target_os = "ios")]
     let native = use_hook(|| {
         use dioxus::mobile::tao::platform::ios::WindowExtIOS;
@@ -44,12 +44,10 @@ fn NativeAdBridge() -> Element {
 }
 
 #[component]
-pub fn NativeAdSlot(#[props(default = false)] posters: bool) -> Element {
-    let suffix = if posters { "posters" } else { "library" };
+pub fn NativeAdSlot(placement: &'static str) -> Element {
     rsx! {
-        if !posters { NativeAdBridge {} }
-        div { class:"native-ad-container", style: "margin-bottom:24px",
-            div { id: "native-ad-slot-{suffix}", class: "native-ad-slot", style: "height:440px;min-width:240px;position:relative", "aria-label": "Advertisement" }
+        div { class:"native-ad-container", style: "margin:16px 0 24px",
+            div { id: "native-ad-slot-{placement}", class: "native-ad-slot", style: "height:440px;min-width:240px;position:relative", "aria-label": "Advertisement" }
             p { class: "hint native-ad-status", role: "status", "Advertisement loads when this section is visible." }
             button { r#type: "button", class: "secondary ad-retry", hidden: true, "Retry ad" }
             button { r#type: "button", class: "secondary ad-privacy", hidden: true, "Ad privacy options" }

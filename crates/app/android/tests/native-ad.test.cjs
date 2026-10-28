@@ -52,6 +52,18 @@ test('shows an entirely visible slot, deduplicates unchanged geometry and cleans
   assert.equal(h.listeners.size, 0);
 });
 
+test('three page placements share one native view and follow whichever page is visible', () => {
+  const h = harness();
+  const original = h.document.querySelectorAll;
+  const third = {...h.slot,id:'native-ad-slot-library',hidden:false};
+  h.slot.id='native-ad-slot-details';h.poster.id='native-ad-slot-posters';
+  h.document.querySelectorAll=selector=>selector==='.native-ad-slot'?[h.slot,h.poster,third]:original(selector);
+  h.slot.hidden=true;h.poster.hidden=true;h.tick();
+  assert.equal(h.messages.at(-1).placement,'native-ad-slot-library');
+  third.hidden=true;h.slot.hidden=false;h.tick();
+  assert.equal(h.messages.at(-1).placement,'native-ad-slot-details');
+});
+
 test('hides the native overlay under dialogs, scrolling clips, and backgrounding', () => {
   const h = harness();
   h.modal(true); h.tick(); assert.equal(h.messages.at(-1).visible, false);
