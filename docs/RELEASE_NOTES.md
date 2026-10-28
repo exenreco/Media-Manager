@@ -1,22 +1,26 @@
-# Media Manager 1.0.0 beta 3
+# Media Manager 1.0.0 beta 4
 
 ## Changes
 
-- Added desktop update checks in Settings, with stable/beta channels and verified installer downloads. Update manifests use Ed25519 signatures; downloaded packages are checked for size and SHA-256 before opening the installer.
-- Replaced Android video transfer through the JavaScript storage bridge with native streaming for local and paired-server files, including seeking and stream cleanup when selection changes. Inline preview requires Android 8 or newer.
-- Added cancellable preview preparation and buffering feedback to reduce stale preview work.
-- Matched API source, artwork sorting and library ordering sheets to the mobile preview sheet, including dimensions, backdrop, animation and dismissal.
+- Added native compatibility playback using LibVLC on Android and VLCKit on iOS, alongside inline previews. Broadened media-extension recognition and shared MIME handling.
+- Added optional 30-second H.264/AAC compatibility previews for desktop and paired libraries using FFmpeg installed on the library host. Original media is preserved.
+- Moved Android player teardown off the UI thread and kept playback preparation cancellable to reduce freezes and stale playback when switching items.
+- Moved Advertising below rename history in Settings.
+- Added Android API 36 Play bundle tooling, private upload-key signing, 16 KB native alignment checks, and matching native debug symbol exports.
+- Added the privacy policy, current Android screenshots, and Google Play listing assets; removed the older dashboard screenshot.
 
 ## Downloads and validation
 
-Platform jobs attach packages and SHA-256 checksums as they complete: Windows x64 setup and portable ZIP; macOS Apple Silicon and Intel PKG and ZIP; Linux x64 DEB, TAR.GZ and Flatpak; Android ARM64 preview APK; iOS ARM64 simulator ZIP.
+Release CI rebuilds Windows x64 setup/portable packages, Apple Silicon and Intel macOS PKG/ZIP packages, Linux x64 DEB/TAR.GZ/Flatpak packages, an Android ARM64 preview APK, and an iOS ARM64 simulator ZIP. Checksums and signed desktop updater metadata appear as jobs complete. Check the workflow results before assuming every platform is available.
 
-The source preceding this version bump passed desktop checks on Windows, macOS and Linux, Android ARM64 compilation, Android x86_64 emulator installation/launch, and iOS ARM64 simulator installation/launch. Playback range tests and strict app Clippy passed. Release packages are rebuilt from this tag. Actual playback with user media and physical-device codec compatibility remain unverified.
+The preceding application snapshot passed native desktop checks on Windows, macOS and Linux, Android ARM64/x86_64 compilation, and iOS simulator compilation/launch. A generated MPEG-4 Part 2 MP4 played to completion in the Android compatibility player without a crash. Physical-device playback and the original user-reported MP4 remain unverified. See docs/PLAYBACK.md and docs/MOBILE_VALIDATION.md.
 
 ## Limits
 
-Mobile previews use test ads. Fullscreen playback, earned rewards and early dismissal still need physical-device acceptance. Permanent paid ad removal is not implemented while store account setup is pending.
+GitHub Android and iOS preview packages use test ads. The separately signed Play AAB is an upload artifact, not a GitHub preview APK; its native symbols must match that exact build. The beta.3 version-code-1000004 Play upload remains separate from this release. A beta.4 Play rebuild uses version code 1000005.
 
-The iOS ZIP is simulator-only, not an installable iPhone IPA. Device distribution requires Apple signing and provisioning. Android previews are CI debug-signed; upgrading an older preview may require reinstalling if its signing key differs. Windows publisher signing needs configured credentials. macOS apps are ad-hoc signed; installers are not Developer ID signed or notarized.
+The iOS ZIP is for Simulator, not an iPhone IPA. Device distribution requires Apple signing/provisioning. Windows publisher signing remains conditional on configured credentials. macOS apps are ad-hoc signed; installers are not Developer ID signed or notarized.
 
-Linux DEB/TAR.GZ require compatible host libraries; Flatpak supplies its managed GNOME 49 GTK/WebKitGTK runtime. Mobile background execution and notifications remain unfinished. Review rename destinations before confirming; operations can partially succeed. Original code is Apache 2.0 licensed; dependencies, SDKs and provider data retain their own terms.
+Playback depends on the container, codecs, device and decoder build. FFmpeg is not bundled; the Flatpak sandbox needs an accessible converter for compatibility conversion. Native decoder libraries retain their own licenses and notices. Linux Flatpak supplies GTK/WebKitGTK; DEB/TAR.GZ need compatible host libraries.
+
+Mobile background execution and notifications, physical-device advertising acceptance, and permanent paid ad removal remain unfinished. Review rename destinations before applying; operations can partially succeed, with completed changes recorded for explicit Undo.

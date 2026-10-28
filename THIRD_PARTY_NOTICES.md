@@ -27,3 +27,6 @@ Do not include developer credentials, signing keys or personal library data in
 source or binary distributions.
 
 - Local TLS hosting uses axum-server (MIT), rcgen (MIT/Apache-2.0), and rustls (Apache-2.0/ISC/MIT). Android QR camera scanning uses JourneyApps ZXing Android Embedded (Apache-2.0) and ZXing (Apache-2.0). iOS uses Apple AVFoundation.
+
+- Android compatibility playback uses VideoLAN LibVLC Android 3.7.5 (LGPL-2.1); iOS uses the checksum-pinned official VLCKit 4.0 development binary from 2026-09-29, matching VideoLAN's Swift package distribution. Source and license: https://code.videolan.org/videolan/libvlcjni and https://github.com/videolan/vlckit. These libraries retain their own license terms and are not relicensed under Apache-2.0. Preserve vendor notices and provide the corresponding source/relinking materials before distributing builds with these libraries.
+- Compatibility preview conversion invokes a separately installed FFmpeg. FFmpeg and its codecs retain their build-specific licenses; no FFmpeg binary is currently redistributed by Media Manager.

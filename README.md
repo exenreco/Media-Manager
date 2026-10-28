@@ -6,28 +6,39 @@ A Rust desktop and mobile app for organizing TV shows and movies with a clear,
 reviewable rename preview. Built with Dioxus, with an optional Axum backend for
 controlling a library from another device.
 
-[Releases](https://github.com/exenreco/Media-Manager/releases) ·
-[User guide](docs/USER_GUIDE.md) · [Release guide](docs/RELEASING.md) ·
+[Releases](https://github.com/exenreco/Media-Manager/releases) Â·
+[User guide](docs/USER_GUIDE.md) Â· [Release guide](docs/RELEASING.md) Â·
 [Apache 2.0 license](LICENSE)
 
-![Media Manager dashboard](Screenshot.png)
+## Screenshots
+
+| Connect your library | Review your media |
+| --- | --- |
+| <img src="assets/store/google-play/01-welcome.png" alt="Android welcome and provider settings" width="300"> | <img src="assets/store/google-play/02-library.png" alt="Android season library with proposed filenames and missing episodes" width="300"> |
+| **Local or paired libraries** | **Custom naming and ordering** |
+| <img src="assets/store/google-play/04-connect.png" alt="Android local and remote library connection options" width="300"> | <img src="assets/store/google-play/03-ordering.png" alt="Android ordering settings and saved naming profiles" width="300"> |
+
+Captured Android app screens with presentation captions. Store assets are in
+[assets/store/google-play](assets/store/google-play).
+
+Playback compatibility and decoder requirements are documented in [Media playback](docs/PLAYBACK.md).
 
 ## Features
 
 - TV-show and movie modes, optional season selection, Plex/Jellyfin naming and custom templates.
 - Season tables with missing episodes, filename edits and media playback.
-- Show/season poster previews and optional downloads that preserve existing images.
-- Working source: icon rail, custom desktop title bar, inline video/title inspector, and an expanding mobile tool menu.
+- Local and provider artwork grids, poster comparisons, and explicit replacement controls.
+- Responsive icon navigation, custom desktop title bar, media inspector, and mobile bottom sheets.
 - Local libraries or an authenticated remote library server.
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.
 
-Version 1.0.0-beta.3 includes title-match selection, anime absolute
+Version 1.0.0-beta.4 includes title-match selection, anime absolute
 numbering and explicit episode mappings, companion-file renaming, durable rename
 history and Undo, alternate TVMaze/TMDB artwork, preview health scans, saved naming
 profiles, and single-use QR pairing with a remote server. See
 [Library tools](docs/LIBRARY_TOOLS.md) for setup and limits, and
-[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v1.0.0-beta.3 previews.
+[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v1.0.0-beta.4 previews.
 
 ## Platform status and downloads
 
@@ -39,19 +50,19 @@ build is not a substitute for native UI and device testing.
 | Windows x64 | Setup EXE and portable ZIP | Setup installs WebView2 if missing; publisher signing depends on release configuration |
 | macOS Apple Silicon / Intel | PKG installer and portable ZIP | Ad-hoc signed app; installer is not Developer ID signed or notarized |
 | Linux x64 | DEB, Flatpak with managed runtime, or TAR.GZ | DEB targets Ubuntu 24.04+ compatible systems; Flatpak supplies GTK/WebKitGTK |
-| Android ARM64 | Installable debug-signed preview APK | Test ads; new native folder access awaits device validation; background execution pending |
+| Android ARM64 | Installable debug-signed preview APK | GitHub previews use test ads; private upload-key signing produces Play AABs separately; physical-device acceptance pending |
 | iOS ARM64 Simulator | Simulator app ZIP | For Xcode Simulator, not an installable iPhone IPA; device signing remains pending |
 
 The tag-triggered [release workflow](.github/workflows/release.yml) builds each
 platform on its native host and attaches successful artifacts and SHA-256 checksums
 to a GitHub prerelease. Assets appear as jobs finish. A missing asset means that
 platform job has not completed successfully; check Actions before downloading.
-The v1.0.0-beta.3 source and mobile previews include Android document-tree selection and
+The v1.0.0-beta.4 source and mobile previews include Android document-tree selection and
 iOS security-scoped folder selection for local previews, renaming, posters and
 playback. Both mobile integrations have compiled in native CI; device/provider
 validation is still pending. Mobile background jobs and notifications remain unfinished.
 
-Download the [v1.0.0-beta.3 previews](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0-beta.3).
+Download the [v1.0.0-beta.4 previews](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0-beta.4).
 
 The beta release includes Windows setup, macOS PKG and Linux DEB installers
 alongside portable downloads and the managed Linux Flatpak. See [desktop installation](docs/INSTALLATION.md)
@@ -79,7 +90,7 @@ From the repository root:
 cargo run -p tv-manager-app --locked
 ```
 
-Select a media folder, configure naming and metadata, build the preview, inspect
+Select a media folder, configure naming and metadata, let the preview refresh, inspect
 all destinations, and confirm applying it. Renames affect real files; a batch can
 partially succeed; completed operations are recorded for explicit Undo. Existing destination files are never
 overwritten. See the [user guide](docs/USER_GUIDE.md) for matching rules and limitations.
@@ -123,9 +134,20 @@ dx build --platform ios --no-default-features --features mobile
 ```
 
 Advertising SDK setup, publisher requirements and native validation:
-[Android](crates/app/android/README.md) · [iOS](crates/app/ios/README.md).
+[Android](crates/app/android/README.md) Â· [iOS](crates/app/ios/README.md).
 iOS needs the documented SDK embedding/signing step before installation/export.
-Release CI produces mobile previews with test ads, not store-ready releases.
+Release CI produces mobile previews with test ads. The separate
+[Play bundle workflow](.github/workflows/play-bundle.yml) builds an unsigned ARM64
+release AAB targeting API 36, retains native Rust symbols, and exports a matching
+`native-debug-symbols.zip`. Sign privately with
+[scripts/sign_android_bundle.ps1](scripts/sign_android_bundle.ps1); never publish
+upload keys or passwords. See [Android release builds](docs/ANDROID_RELEASE.md).
+The existing Play upload uses version code 1000004; the next build uses 1000005.
+
+Android compatibility playback uses bundled LibVLC; iOS uses VLCKit. Desktop and
+paired compatibility conversion needs FFmpeg installed on the library host.
+See [playback support and limits](docs/PLAYBACK.md) and
+[third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Development checks
 
@@ -163,9 +185,16 @@ Original project code and generated branding are licensed under **Apache 2.0**.
 Commercial use, including ad-supported distribution, is permitted. The license
 includes an explicit patent grant and allows forks and redistribution; it does
 not reserve advertising revenue or exclusive distribution rights to this project.
-Copyright © 2026 Exenreco Bell. Dependencies, Google SDKs and provider artwork
+Copyright Â© 2026 Exenreco Bell. Dependencies, Google SDKs and provider artwork
 retain their own terms; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Desktop app updates
 
-Desktop builds include Settings → App updates for signed GitHub Release checks, stable/beta channels and verified installer downloads. Updates open the platform installer after media work finishes. See [Desktop updates](docs/UPDATES.md) for signing setup, supported package types and limits. Signed-update publishing must be enabled before future releases can be offered in-app.
+Desktop builds include Settings â†’ App updates for signed GitHub Release checks, stable/beta channels and verified installer downloads. Updates open the platform installer after media work finishes. See [Desktop updates](docs/UPDATES.md) for signing setup, supported package types and limits. Release CI publishes signed updater metadata when all desktop packages succeed; installer publisher signing is a separate configuration.
+
+## Privacy and support
+
+Read the [privacy policy](https://www.exenreco.com/2026/10/media-manager-privacy-policy)
+or its [HTML source](docs/privacy-policy.html). For support, open a
+[GitHub issue](https://github.com/exenreco/Media-Manager/issues) or email
+[sparksplus22@gmail.com](mailto:sparksplus22@gmail.com).

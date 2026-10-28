@@ -291,3 +291,25 @@ passed Android ARM64 compilation, Android x86_64 emulator installation/launch an
 iOS ARM64 Simulator installation/launch. Desktop regression checks passed on
 Windows, macOS and Linux in run 40726928231. These remain launch checks rather
 than end-to-end media playback acceptance.
+
+### Broad codec compatibility validation (2026-10-28)
+
+Snapshot `a74d6e3dfeec13fa9e81e0a78e96bc5032633bad` passed Android ARM64
+compilation, Android x86_64 emulator installation/launch and iOS ARM64 simulator
+installation/launch in [40744826948](https://github.com/exenreco/Media-Manager/actions/runs/40744826948).
+Windows, macOS and Linux checks passed in run 40744826955.
+
+The current Android emulator APK was then installed locally with saved app data
+restored. `scripts/android_playback_smoke.py` generated a 12-second MPEG-4 Part 2
+MP4, copied it to private test storage and observed `video-output`, `playing` and
+`ended` from the bundled decoder. The app remained running without a detected
+crash/ANR. An earlier attempt exposed a synchronous native teardown stall; shutdown
+now runs off the UI thread. The debug-only fixture is isolated from frontend
+selection cleanup and is disabled during normal startup.
+
+Real FFmpeg tests converted MPEG-4-in-MP4 to H.264, decoded the output, checked
+original bytes were unchanged, and exercised authenticated compatibility tickets,
+HEAD and seek requests. Strict workspace Clippy passed. A Windows development
+executable was built locally. These checks do not validate the user's original
+MP4, every codec/profile, physical-device playback, or paired HTTPS decoding.
+See [Media playback](PLAYBACK.md) for runtime requirements and current limits.

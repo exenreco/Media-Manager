@@ -264,6 +264,7 @@ pub fn Inspector(
         let _=document::eval("window.MediaManagerStorage?.postMessage(JSON.stringify({op:'stopMediaPreview',id:'stop-preview'}))");
     });
     media_player::use_media_handler(media);
+    let retry_pending = pending.clone();
     let effect_connection = connection.clone();
     use_effect(move || {
         if let Some(task) = pending.borrow_mut().take() {
@@ -313,11 +314,54 @@ pub fn Inspector(
             div {class:"video-stage",
                 if let Some(value)=media.read().as_ref() {
                     video {key:"{value.id}",src:value.source(),controls:true,autoplay:true,muted:true,playsinline:true,preload:"metadata",onwaiting:move |_|buffering.set(true),onstalled:move |_|buffering.set(true),onplaying:move |_|buffering.set(false),oncanplay:move |_|buffering.set(false),
-                        onerror:move|_|{buffering.set(false);error.set("Preview could not be played. Check the connection and file format. MP4 with H.264/AAC is widely supported.".into());}}
+                        onerror:move|_|{buffering.set(false);error.set("The inline player could not decode or load this file.".into());}}
                 } else {div {class:"video-placeholder",Icon {name:"play"} span {if loading(){"Preparing preview…"}else{"No video preview"}}}}
             }
             if buffering() && error().is_empty() {p {class:"hint",role:"status","Buffering video…"}}
             if !error().is_empty() {p {class:"error",role:"alert","{error}"}}
+            if cfg!(target_os="android") {
+                if let Some(value)=media.read().as_ref() {
+                    {
+                        let source=value.source();
+                        rsx! { button {class:"secondary",onclick:move |_|{
+                            let source=source.clone();
+                            #[cfg(target_os="android")]
+                            spawn(async move {if let Err(e)=crate::mobile_storage::play_compatible_preview(source).await {error.set(format!("Could not open compatibility player: {e:#}"));}});
+                            #[cfg(not(target_os="android"))]
+                            let _=source;
+                        },"Open compatibility player"} }
+                    }
+                }
+            }
+            if cfg!(target_os="ios") && !connection.remote {
+                button {class:"secondary",onclick:move |_|{
+                    #[cfg(target_os="ios")]
+                    if let Some((p,index))=plan.read().clone().zip(selected()) {spawn(async move {if let Err(e)=crate::mobile_storage::play_compatible_document(&p,index).await {error.set(format!("Could not open compatibility player: {e:#}"));}});}
+                },"Open compatibility player"}
+            }
+            if !cfg!(target_os="android") && (!cfg!(target_os="ios") || connection.remote) {
+                button {class:"secondary",disabled:loading(),onclick:{let c=connection.clone(); let pending=retry_pending.clone(); move |_|{
+                    let Some(index)=selected() else{return;};let Some(p)=plan.read().clone() else{return;};
+                    let c=c.clone();let next=generation.peek().wrapping_add(1);generation.set(next);loading.set(true);media.set(None);error.set(String::new());
+                    if let Some(task)=pending.borrow_mut().take(){task.cancel();}
+                    *pending.borrow_mut()=Some(spawn(async move {
+                        let result=c.preview_media_mode(p,index,true).await;
+                        if *generation.peek()!=next{return;}
+                        match result {
+                            Ok(value)=>{
+                                #[cfg(target_os="ios")]
+                                if let media_player::Location::File(path)=&value.location {
+                                    if let Err(e)=crate::mobile_storage::play_compatible_cache(path).await {error.set(format!("Could not open compatibility player: {e:#}"));}
+                                }
+                                media.set(Some(value));
+                            },
+                            Err(e)=>error.set(format!("Compatibility preview failed: {e:#}"))
+                        };
+                        loading.set(false);
+                    }));
+                }},"Create compatibility preview"}
+                p {class:"hint","Creates a temporary 30-second preview. The original file is kept. Requires FFmpeg on the library computer."}
+            }
             p {class:"inspector-filename",title:"{task.source.display()}","{task.source.file_name().unwrap_or_default().to_string_lossy()}"}
             label {"Selected item title" input {value:"{draft}",disabled:disabled || busy(),oninput:move|e|draft.set(e.value()),placeholder:"Enter a title"}}
             p {class:"hint","The extension is kept. Save updates the preview; Apply renames changes the file."}

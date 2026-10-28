@@ -1,0 +1,269 @@
+name: Rebuild all platform packages
+on:
+  push:
+    branches: ['codex/rebuild-all-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_INCREMENTAL: '0'
+  RELEASE_TAG: 'v1.0.0-beta.4'
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            arch: x86_64
+          - os: macos-15
+            platform: macos
+            arch: aarch64
+          - os: macos-15-intel
+            platform: macos
+            arch: x86_64
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_INCREMENTAL: '0'
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev desktop-file-utils xvfb libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: python -m unittest discover -s scripts/tests
+      - run: cargo build --release --locked -p tv-manager-app -p tv-manager-server
+      - name: Package portable payload
+        shell: bash
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          echo "INSTALLER_VERSION=$version" >> "$GITHUB_ENV"
+          python scripts/package_desktop.py --platform '${{ matrix.platform }}' --arch '${{ matrix.arch }}' --version "$version"
+      - name: Prepare Windows packaging
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/prepare_windows_installer.ps1
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python scripts/package_installer.py --platform windows --arch x86_64 --version $env:INSTALLER_VERSION --iscc "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" --webview-bootstrapper .tools/installer/MicrosoftEdgeWebview2Setup.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test Windows install, upgrade, launch and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test_windows_installer.ps1
+      - name: Build macOS or Linux installer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python scripts/package_installer.py --platform '${{ matrix.platform }}' --arch '${{ matrix.arch }}' --version "$INSTALLER_VERSION"
+      - name: Test macOS package installation
+        if: runner.os == 'macOS'
+        run: |
+          sudo installer -pkg dist/*.pkg -target /
+          test -x '/Applications/Media Manager.app/Contents/MacOS/media-manager'
+          test -x '/Applications/Media Manager.app/Contents/MacOS/media-manager-server'
+          codesign --verify --deep --strict '/Applications/Media Manager.app'
+          pkgutil --pkg-info com.tvshowmanager.app.installer
+          sudo installer -pkg dist/*.pkg -target /
+      - name: Test Linux package installation and launch
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./dist/*.deb
+          desktop-file-validate /usr/share/applications/com.tvshowmanager.app.desktop
+          test -x /usr/bin/media-manager-server
+          xvfb-run -a python scripts/test_installed_app.py /usr/bin/media-manager
+          sudo apt-get remove -y media-manager
+          test ! -e /usr/bin/media-manager
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*-setup.exe
+            dist/*.pkg
+            dist/*.deb
+            dist/*.sha256
+          if-no-files-found: error
+
+  android-bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MEDIA_MANAGER_PLAY_BUNDLE: 'true'
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install native Android toolchain
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - run: bash scripts/install-dioxus.sh
+      - name: Configure Kotlin and app icons
+        run: |
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home/init.d"
+          cp crates/app/android/kotlin-toolchain.init.gradle "$gradle_home/init.d/media-manager-kotlin.gradle"
+          echo "GRADLE_USER_HOME=$gradle_home" >> "$GITHUB_ENV"
+          echo "MEDIA_MANAGER_ANDROID_ICONS=$GITHUB_WORKSPACE/assets/branding/icons/android" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build optimized Android release
+        working-directory: crates/app
+        run: dx build --release --platform android --target aarch64-linux-android --no-default-features --features mobile
+      - name: Build unsigned Play bundle
+        run: |
+          project=$(find target/dx -path '*/gradle/wrapper/gradle-wrapper.properties' -print -quit)
+          test -n "$project"
+          project="${project%/gradle/wrapper/gradle-wrapper.properties}"
+          cd "$project"
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:bundleRelease
+      - name: Collect unsigned bundle
+        run: |
+          mkdir -p dist/play-bundle
+          bundle=$(find target/dx -path '*/outputs/bundle/release/*.aab' -type f -print -quit)
+          test -n "$bundle"
+          cp "$bundle" dist/play-bundle/Media-Manager-1.0.0-beta.4-android-arm64-unsigned.aab
+          python scripts/verify_android_bundle.py dist/play-bundle/*.aab
+          cd dist/play-bundle
+          sha256sum *.aab > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-play-bundle-unsigned
+          path: dist/play-bundle/*
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: bash scripts/install-dioxus.sh
+      - uses: Swatinem/rust-cache@v2
+      - name: Build iOS Simulator app with test ads
+        working-directory: crates/app
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: '15.0'
+        run: dx build --platform ios --target aarch64-apple-ios-sim --no-default-features --features mobile
+      - name: Embed frameworks and sign the simulator app
+        run: |
+          app=$(find target/dx -type d -name '*.app' | head -n 1)
+          artifacts=$(find target -type d -path '*/mediamanagerads/.build/artifacts' | head -n 1)
+          test -n "$app" && test -n "$artifacts"
+          python3 crates/app/ios/embed_ad_frameworks.py --app "$app" --artifacts "$artifacts" --sdk iphonesimulator --arch arm64 --identity -
+          echo "SMOKE_IOS_APP=$GITHUB_WORKSPACE/$app" >> "$GITHUB_ENV"
+      - name: Create a disposable iPhone simulator
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          def read(kind):
+              return json.loads(subprocess.check_output(['xcrun','simctl','list',kind,'--json']))[kind]
+          runtimes=[r for r in read('runtimes') if r.get('isAvailable') and r['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
+          runtime=max(runtimes,key=lambda r:tuple(int(n) for n in r['version'].split('.')))
+          types=[t for t in read('devicetypes') if t['name'].startswith('iPhone')]
+          device=subprocess.check_output(['xcrun','simctl','create','Media Manager Validation',next((t['identifier'] for t in types if t['name']=='iPhone 16'),types[-1]['identifier']),runtime['identifier']],text=True).strip()
+          with open(os.environ['GITHUB_ENV'],'a') as output:
+              output.write('SMOKE_SIMULATOR='+device+'\n')
+          subprocess.check_call(['xcrun','simctl','boot',device])
+          subprocess.check_call(['xcrun','simctl','bootstatus',device,'-b'])
+          PY
+      - name: Install and launch in iOS Simulator
+        run: python3 scripts/mobile_smoke.py --platform ios --device "$SMOKE_SIMULATOR" --app "$SMOKE_IOS_APP" --evidence target/mobile-validation/ios
+      - name: Archive simulator app for diagnostics
+        if: always() && env.SMOKE_IOS_APP != ''
+        run: |
+          mkdir -p target/mobile-validation/ios
+          ditto -c -k --sequesterRsrc --keepParent "$SMOKE_IOS_APP" target/mobile-validation/ios/Media-Manager-simulator.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-launch-evidence
+          path: target/mobile-validation/ios/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove only the simulator created by this job
+        if: always()
+        run: |
+          if [ -n "${SMOKE_SIMULATOR:-}" ]; then
+            xcrun simctl shutdown "$SMOKE_SIMULATOR" || true
+            xcrun simctl delete "$SMOKE_SIMULATOR"
+          fi
+
+  linux-runtime:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Check out current packaging tools
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build and runtime packaging dependencies
+        run: |
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt-get update
+          sudo apt-get install -y flatpak xvfb xdotool dbus-x11 libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak --user install --noninteractive --no-related flathub org.gnome.Platform//49 org.gnome.Sdk//49
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p tv-manager-app -p tv-manager-server --locked
+      - name: Package against managed GTK and WebKitGTK runtime
+        run: |
+          cp .release-tools/assets/branding/icons/linux-256.png assets/branding/icons/linux-256.png
+          python .release-tools/scripts/package_flatpak.py --version "${RELEASE_TAG#v}"
+          flatpak --user install --noninteractive dist/*.flatpak
+      - name: Verify app starts in the runtime
+        run: |
+          xvfb-run -a dbus-run-session -- bash .release-tools/scripts/smoke_flatpak.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-managed-runtime
+          path: |
+            dist/*.flatpak
+            dist/*runtime-sources.tar.gz
+            dist/*.sha256
+          if-no-files-found: error

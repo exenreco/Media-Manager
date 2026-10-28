@@ -1,3 +1,4 @@
+pub mod compatibility;
 mod library;
 mod media;
 
@@ -438,6 +439,110 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
+    }
+
+    #[tokio::test]
+    async fn compatibility_tickets_require_auth_and_serve_seekable_preview_copies() {
+        let _serial = crate::compatibility::TEST_SERIAL.lock().await;
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("1.mp4");
+        let created = std::process::Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=96x64:rate=5",
+                "-t",
+                "1",
+                "-c:v",
+                "mpeg4",
+                "-y",
+            ])
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(created.status.success());
+        let original = std::fs::read(&file).unwrap();
+        let app = app(root.path().into());
+        let payload = PlanRequest {
+            name: "Example".into(),
+            source: Source::Manual {
+                titles: "Pilot".into(),
+            },
+            ..Default::default()
+        };
+        let response = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/v1/plans",
+                serde_json::to_string(&payload).unwrap(),
+            ))
+            .await
+            .unwrap();
+        let plan: RenamePlan =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1_000_000).await.unwrap())
+                .unwrap();
+        let path = format!("/v1/plans/{}/tasks/0/play?compatible=true", plan.id);
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        let response = app
+            .clone()
+            .oneshot(request("POST", &path, String::new()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1000).await.unwrap()).unwrap();
+        let stream = format!("/v1/media/{}", value["ticket"].as_str().unwrap());
+        let head = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri(&stream)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(head.status(), StatusCode::OK);
+        assert_eq!(head.headers()["content-type"], "video/mp4");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(&stream)
+                    .header("range", "bytes=0-31")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        let data = to_bytes(response.into_body(), 32).await.unwrap();
+        assert_eq!(data.len(), 32);
+        assert!(data.windows(4).any(|b| b == b"ftyp"));
+        assert_eq!(std::fs::read(&file).unwrap(), original);
     }
 
     #[tokio::test]

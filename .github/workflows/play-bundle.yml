@@ -1,0 +1,76 @@
+name: Android Play bundle build
+on:
+  push:
+    branches: ['codex/play-aab-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_INCREMENTAL: '0'
+jobs:
+  android-bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MEDIA_MANAGER_PLAY_BUNDLE: 'true'
+      MEDIA_MANAGER_VERSION_CODE: '1000005'
+      CARGO_PROFILE_RELEASE_DEBUG: '1'
+      CARGO_PROFILE_RELEASE_STRIP: 'none'
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install native Android toolchain
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - run: bash scripts/install-dioxus.sh
+      - name: Configure Kotlin and app icons
+        run: |
+          gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$gradle_home/init.d"
+          cp crates/app/android/kotlin-toolchain.init.gradle "$gradle_home/init.d/media-manager-kotlin.gradle"
+          echo "GRADLE_USER_HOME=$gradle_home" >> "$GITHUB_ENV"
+          echo "MEDIA_MANAGER_ANDROID_ICONS=$GITHUB_WORKSPACE/assets/branding/icons/android" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build optimized Android release
+        working-directory: crates/app
+        run: dx build --release --platform android --target aarch64-linux-android --no-default-features --features mobile
+      - name: Build unsigned Play bundle
+        run: |
+          project=$(find target/dx -path '*/gradle/wrapper/gradle-wrapper.properties' -print -quit)
+          test -n "$project"
+          project="${project%/gradle/wrapper/gradle-wrapper.properties}"
+          cd "$project"
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:bundleRelease
+      - name: Collect unsigned bundle
+        run: |
+          mkdir -p dist/play-bundle
+          bundle=$(find target/dx -path '*/outputs/bundle/release/*.aab' -type f -print -quit)
+          test -n "$bundle"
+          cp "$bundle" dist/play-bundle/Media-Manager-1.0.0-beta.4-android-arm64-unsigned.aab
+          python scripts/export_android_symbols.py dist/play-bundle/*.aab --target target --ndk "$ANDROID_NDK_HOME" --output dist/play-bundle/native-debug-symbols.zip
+          python scripts/verify_android_bundle.py dist/play-bundle/*.aab
+          cd dist/play-bundle
+          sha256sum *.aab *.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-play-bundle-unsigned
+          path: dist/play-bundle/*
+          if-no-files-found: error

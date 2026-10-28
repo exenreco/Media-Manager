@@ -11,7 +11,7 @@ const CHUNK: u64 = 1024 * 1024;
 
 #[derive(Clone)]
 pub enum Location {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(target_os = "android"))]
     File(std::path::PathBuf),
     #[cfg(not(target_os = "android"))]
     Remote(reqwest::Client, String),
@@ -27,23 +27,11 @@ pub struct Media {
     pub size: u64,
     pub mime: &'static str,
     pub id: String,
+    pub _preview_cache: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
 pub fn mime(path: &std::path::Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
-        "webm" => "video/webm",
-        "mkv" => "video/x-matroska",
-        "ts" | "m2ts" => "video/mp2t",
-        _ => "video/x-msvideo",
-    }
+    tv_manager_core::rename::video_mime(path).unwrap_or("application/octet-stream")
 }
 
 fn range(value: Option<&str>, size: u64) -> Result<(u64, u64)> {
@@ -88,9 +76,11 @@ fn range(value: Option<&str>, size: u64) -> Result<(u64, u64)> {
 impl Media {
     pub fn source(&self) -> String {
         #[cfg(target_os = "android")]
-        if let Location::Native(source) = &self.location {
-            return source.clone();
+        {
+            let Location::Native(source) = &self.location;
+            source.clone()
         }
+        #[cfg(not(target_os = "android"))]
         format!("/media-preview/{}", self.id)
     }
 
@@ -102,7 +92,7 @@ impl Media {
         match &self.location {
             #[cfg(target_os = "android")]
             Location::Native(_) => bail!("Native media streams are handled by Android"),
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            #[cfg(not(target_os = "android"))]
             Location::File(path) => {
                 use std::io::{Read, Seek};
                 let path = path.clone();
@@ -252,6 +242,7 @@ mod tests {
             size: 10,
             mime: "video/mp4",
             id: "test".into(),
+            _preview_cache: None,
         };
         let response = media
             .response(

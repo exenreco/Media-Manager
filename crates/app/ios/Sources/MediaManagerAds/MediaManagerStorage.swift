@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import QuickLook
 import CryptoKit
 import AVFoundation
+import VLCKit
 
 /// Security-scoped folder access; no access outside folders chosen in Files.
 @MainActor
@@ -47,7 +48,7 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
         if command["op"] as? String == "appDirectories" {
             do {
                 let state = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                reply(command, ["state": state.path])
+                reply(command, ["state": state.path, "cache": FileManager.default.temporaryDirectory.path])
             } catch { reply(command, ["error": error.localizedDescription]) }
             return
         }
@@ -78,13 +79,32 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
         }
         // File coordination and cloud-provider I/O must not block the UI thread.
         let operation = command["op"] as? String ?? ""
-        if operation == "play" {
+        if operation == "playCompatibleCache" {
+            do {
+                let file=URL(fileURLWithPath:command["path"] as? String ?? "").resolvingSymlinksInPath()
+                let cache=FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path+"/"
+                guard file.path.hasPrefix(cache),file.lastPathComponent=="preview.mp4",let controller,controller.presentedViewController == nil else {throw fail("Invalid compatibility preview or another dialog is open")}
+                let preview=CompatibilityPlayerController(url:file) {}
+                preview.modalPresentationStyle = .fullScreen
+                controller.present(preview,animated:true);reply(command,[:])
+            }catch{reply(command,["error":error.localizedDescription])}
+            return
+        }
+        if operation == "play" || operation == "playCompatiblePreview" {
             do {
                 let root = try folder(command)
                 let file: URL
                 do { file = try resolve(root, command["path"] as? String ?? "") }
                 catch { root.stopAccessingSecurityScopedResource(); throw error }
                 previewRoot?.stopAccessingSecurityScopedResource(); previewRoot = root; previewURL = file
+                if operation == "playCompatiblePreview" {
+                    guard let controller, controller.presentedViewController == nil else { throw fail("Close the current player before opening another") }
+                    let preview = CompatibilityPlayerController(url: file) { [weak self] in
+                        self?.previewRoot?.stopAccessingSecurityScopedResource(); self?.previewRoot = nil
+                    }
+                    preview.modalPresentationStyle = .fullScreen
+                    controller.present(preview, animated: true); reply(command, [:]); return
+                }
                 let preview = QLPreviewController(); preview.dataSource = self; preview.delegate = self
                 controller?.present(preview, animated: true); reply(command, [:])
             } catch { reply(command, ["error": error.localizedDescription]) }
