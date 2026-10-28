@@ -253,7 +253,8 @@ pub fn Inspector(
     let mut generation = use_signal(|| 0u64);
     let mut loading = use_signal(|| false);
     let mut buffering = use_signal(|| false);
-    let pending = use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<Task>)));
+    let pending =
+        use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<dioxus::core::Task>)));
     let cleanup = pending.clone();
     use_drop(move || {
         if let Some(task) = cleanup.borrow_mut().take() {
