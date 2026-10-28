@@ -9,7 +9,7 @@ def verify(path):
   assert not any(n.upper().startswith('META-INF/') and n.upper().endswith(('.RSA','.DSA','.EC','.SF')) for n in names),'Expected an unsigned bundle before local signing'
   libraries=[n for n in names if n.startswith('base/lib/') and n.endswith('.so')]
   assert libraries and all(n.split('/')[2]=='arm64-v8a' for n in libraries),'Unexpected or missing native ABI'
-  assert any('tv_manager' in n or 'app' in Path(n).name for n in libraries),'Missing application native library'
+  assert 'base/lib/arm64-v8a/libmain.so' in libraries,'Missing application native library'
   for name in libraries:
    data=archive.read(name);assert data[:4]==b'\x7fELF',name
    endian='<' if data[5]==1 else '>';wide=data[4]==2
