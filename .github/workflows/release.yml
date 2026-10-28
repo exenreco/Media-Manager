@@ -413,3 +413,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" dist/* --clobber
+
+  update-metadata:
+    needs: [desktop, windows, linux-runtime]
+    if: ${{ always() && !cancelled() && vars.UPDATER_ENABLED == 'true' && !contains(needs.*.result, 'failure') && (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'desktop' || inputs.platform == 'windows' || inputs.platform == 'linux-runtime') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Sign complete desktop update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATER_SIGNING_KEY: ${{ secrets.UPDATER_SIGNING_KEY }}
+        run: python scripts/sign_update_manifest.py --tag "$RELEASE_TAG"
+      - name: Publish signed updater metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" dist/update-metadata/* --clobber

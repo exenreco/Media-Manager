@@ -218,7 +218,7 @@ pub fn PreviewPanel(onclose: EventHandler, children: Element) -> Element {
     });
     rsx! {
         button {class:"preview-sheet-backdrop",r#type:"button",tabindex:"-1","aria-label":"Close preview",onclick:move |_|close_preview()}
-        section {class:"panel controls right-panel preview-sheet",id:"media-inspector-sidebar",role:"region","aria-label":"Media and artwork preview",tabindex:"-1",
+        section {class:"panel controls right-panel preview-sheet sheet-surface",id:"media-inspector-sidebar",role:"region","aria-label":"Media and artwork preview",tabindex:"-1",
             div {class:"preview-sheet-chrome",
                 div {class:"preview-sheet-grip", "aria-label":"Drag down to close preview",
                     span {"aria-hidden":"true"}
@@ -252,9 +252,25 @@ pub fn Inspector(
     let mut draft = use_signal(String::new);
     let mut generation = use_signal(|| 0u64);
     let mut loading = use_signal(|| false);
+    let mut buffering = use_signal(|| false);
+    let pending =
+        use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<dioxus::core::Task>)));
+    let cleanup = pending.clone();
+    use_drop(move || {
+        if let Some(task) = cleanup.borrow_mut().take() {
+            task.cancel();
+        }
+        #[cfg(target_os = "android")]
+        let _=document::eval("window.MediaManagerStorage?.postMessage(JSON.stringify({op:'stopMediaPreview',id:'stop-preview'}))");
+    });
     media_player::use_media_handler(media);
     let effect_connection = connection.clone();
     use_effect(move || {
+        if let Some(task) = pending.borrow_mut().take() {
+            task.cancel();
+        }
+        #[cfg(target_os = "android")]
+        let _=document::eval("window.MediaManagerStorage?.postMessage(JSON.stringify({op:'stopMediaPreview',id:'stop-preview'}))");
         let current = plan.read().clone();
         let index = selected();
         let c = effect_connection.clone();
@@ -263,6 +279,7 @@ pub fn Inspector(
         media.set(None);
         error.set(String::new());
         loading.set(false);
+        buffering.set(false);
         if let Some((p, index)) = current.zip(index) {
             if let Some(task) = p.tasks.get(index) {
                 draft.set(
@@ -274,7 +291,7 @@ pub fn Inspector(
                 );
                 if tv_manager_core::rename::is_video(&task.source) {
                     loading.set(true);
-                    spawn(async move {
+                    *pending.borrow_mut() = Some(spawn(async move {
                         let result = c.preview_media(p, index).await;
                         if *generation.peek() != next {
                             return;
@@ -284,7 +301,7 @@ pub fn Inspector(
                             Err(e) => error.set(format!("Could not preview this file: {e:#}")),
                         }
                         loading.set(false);
-                    });
+                    }));
                 }
             }
         }
@@ -295,9 +312,11 @@ pub fn Inspector(
         if let Some(task)=task {
             div {class:"video-stage",
                 if let Some(value)=media.read().as_ref() {
-                    video {key:"{value.id}",src:"/media-preview/{value.id}",controls:true,autoplay:true,muted:true,playsinline:true,preload:"metadata",onerror:move|_|error.set("This format cannot be decoded on this device. Try an MP4 (H.264/AAC) or WebM file.".into())}
+                    video {key:"{value.id}",src:value.source(),controls:true,autoplay:true,muted:true,playsinline:true,preload:"metadata",onwaiting:move |_|buffering.set(true),onstalled:move |_|buffering.set(true),onplaying:move |_|buffering.set(false),oncanplay:move |_|buffering.set(false),
+                        onerror:move|_|{buffering.set(false);error.set("Preview could not be played. Check the connection and file format. MP4 with H.264/AAC is widely supported.".into());}}
                 } else {div {class:"video-placeholder",Icon {name:"play"} span {if loading(){"Preparing preview…"}else{"No video preview"}}}}
             }
+            if buffering() && error().is_empty() {p {class:"hint",role:"status","Buffering video…"}}
             if !error().is_empty() {p {class:"error",role:"alert","{error}"}}
             p {class:"inspector-filename",title:"{task.source.display()}","{task.source.file_name().unwrap_or_default().to_string_lossy()}"}
             label {"Selected item title" input {value:"{draft}",disabled:disabled || busy(),oninput:move|e|draft.set(e.value()),placeholder:"Enter a title"}}

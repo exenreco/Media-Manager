@@ -16,16 +16,17 @@ if (dialog) {
     dialog.dataset.sheet = String(sheetMode());
     dialog.style.setProperty('--preview-viewport', `${window.visualViewport?.height || innerHeight}px`);
     if (sheetMode()) main?.setAttribute('data-menu-sheet',id);
-    else if (main?.dataset.menuSheet === id) main.removeAttribute('data-menu-sheet');
+    else if (main?.dataset.menuSheet === id) {main.removeAttribute('data-menu-sheet');main.removeAttribute('data-menu-sheet-state');}
   };
   const dismiss = () => {
     if (closing) return;
     closing = true; drag = null; cancelAnimationFrame(frame);
     dialog.style.removeProperty('--sheet-drag');
     dialog.dataset.state = 'closing';
+    if (main?.dataset.menuSheet === id) main.setAttribute('data-menu-sheet-state','closing');
     timer = setTimeout(()=>{
       dialog.close();
-      if (main?.dataset.menuSheet === id) main.removeAttribute('data-menu-sheet');
+      if (main?.dataset.menuSheet === id) {main.removeAttribute('data-menu-sheet');main.removeAttribute('data-menu-sheet-state');}
       dioxus.send('dismiss');
     }, sheetMode() && !reduced.matches ? 300 : 0);
   };
@@ -59,7 +60,7 @@ if (dialog) {
   window.mediaManagerMenuSheets.set(id,{dismiss,cleanup:()=>{
     clearTimeout(timer);cancelAnimationFrame(frame);listeners.forEach(remove=>remove());
     if (dialog.open) dialog.close();
-    if (main?.dataset.menuSheet===id) main.removeAttribute('data-menu-sheet');
+    if (main?.dataset.menuSheet===id) {main.removeAttribute('data-menu-sheet');main.removeAttribute('data-menu-sheet-state');}
     window.mediaManagerMenuSheets.delete(id);finish?.();
   }});
   sync();dialog.dataset.state='entering';dialog.showModal();

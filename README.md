@@ -22,12 +22,12 @@ controlling a library from another device.
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.
 
-Version 1.0.0-beta.2 includes title-match selection, anime absolute
+Version 1.0.0-beta.3 includes title-match selection, anime absolute
 numbering and explicit episode mappings, companion-file renaming, durable rename
 history and Undo, alternate TVMaze/TMDB artwork, preview health scans, saved naming
 profiles, and single-use QR pairing with a remote server. See
 [Library tools](docs/LIBRARY_TOOLS.md) for setup and limits, and
-[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v1.0.0-beta.2 previews.
+[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v1.0.0-beta.3 previews.
 
 ## Platform status and downloads
 
@@ -46,12 +46,12 @@ The tag-triggered [release workflow](.github/workflows/release.yml) builds each
 platform on its native host and attaches successful artifacts and SHA-256 checksums
 to a GitHub prerelease. Assets appear as jobs finish. A missing asset means that
 platform job has not completed successfully; check Actions before downloading.
-The v1.0.0-beta.2 source and mobile previews include Android document-tree selection and
+The v1.0.0-beta.3 source and mobile previews include Android document-tree selection and
 iOS security-scoped folder selection for local previews, renaming, posters and
 playback. Both mobile integrations have compiled in native CI; device/provider
 validation is still pending. Mobile background jobs and notifications remain unfinished.
 
-Download the [v1.0.0-beta.2 previews](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0-beta.2).
+Download the [v1.0.0-beta.3 previews](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0-beta.3).
 
 The beta release includes Windows setup, macOS PKG and Linux DEB installers
 alongside portable downloads and the managed Linux Flatpak. See [desktop installation](docs/INSTALLATION.md)
@@ -165,3 +165,7 @@ includes an explicit patent grant and allows forks and redistribution; it does
 not reserve advertising revenue or exclusive distribution rights to this project.
 Copyright © 2026 Exenreco Bell. Dependencies, Google SDKs and provider artwork
 retain their own terms; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Desktop app updates
+
+Desktop builds include Settings → App updates for signed GitHub Release checks, stable/beta channels and verified installer downloads. Updates open the platform installer after media work finishes. See [Desktop updates](docs/UPDATES.md) for signing setup, supported package types and limits. Signed-update publishing must be enabled before future releases can be offered in-app.

@@ -1,21 +1,17 @@
-# Media Manager 1.0.0 beta 2
+# Media Manager 1.0.0 beta 3
 
 ## Changes
 
-- Added animated black preview sheets for media and artwork on phones and compact desktop windows, with swipe dismissal, keyboard handling and focus restoration.
-- Added matching mobile sheets for API provider selection, artwork sorting and library ordering.
-- Restored the rounded gray bottom navigation capsule while keeping its outer container transparent; removed Android tap-highlight boxes and added spacing above Stop sharing.
-- Kept the Library / Art Work tab labels on one line on narrow screens.
-- Added Android and iOS interstitial ads after successful rename batches, with a two-minute initial session delay and ten-minute cooldown. Unavailable ads are skipped.
-- Added optional rewarded ads in Settings for 30 minutes without ads on that device. Only the SDK earned-reward callback grants the benefit, which survives app restarts.
-- Added consent-aware fullscreen ad loading, cache expiry and privacy options. Debug mobile previews use Google test ads.
-- Expanded mobile validation to build both Android ARM64 phone and x86_64 emulator APKs.
+- Added desktop update checks in Settings, with stable/beta channels and verified installer downloads. Update manifests use Ed25519 signatures; downloaded packages are checked for size and SHA-256 before opening the installer.
+- Replaced Android video transfer through the JavaScript storage bridge with native streaming for local and paired-server files, including seeking and stream cleanup when selection changes. Inline preview requires Android 8 or newer.
+- Added cancellable preview preparation and buffering feedback to reduce stale preview work.
+- Matched API source, artwork sorting and library ordering sheets to the mobile preview sheet, including dimensions, backdrop, animation and dismissal.
 
 ## Downloads and validation
 
 Platform jobs attach packages and SHA-256 checksums as they complete: Windows x64 setup and portable ZIP; macOS Apple Silicon and Intel PKG and ZIP; Linux x64 DEB, TAR.GZ and Flatpak; Android ARM64 preview APK; iOS ARM64 simulator ZIP.
 
-The source preceding this version bump passed 25 JavaScript bridge tests, 23 Rust app tests (two manual tests ignored), 10 iOS packaging tests and strict Clippy. Native installer checks passed on Windows, both macOS architectures and Linux. Android emulator and iOS simulator installation and launch passed. Release packages are rebuilt from this tag.
+The source preceding this version bump passed desktop checks on Windows, macOS and Linux, Android ARM64 compilation, Android x86_64 emulator installation/launch, and iOS ARM64 simulator installation/launch. Playback range tests and strict app Clippy passed. Release packages are rebuilt from this tag. Actual playback with user media and physical-device codec compatibility remain unverified.
 
 ## Limits
 

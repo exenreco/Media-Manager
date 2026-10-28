@@ -648,3 +648,29 @@ pub async fn download_artwork(plan: &RenamePlan) -> Result<tv_manager_core::artw
     result.posters = artwork(plan).await?;
     Ok(result)
 }
+
+#[cfg(target_os = "android")]
+pub async fn native_preview(root: &str, path: &str, mime: &str) -> Result<(String, u64)> {
+    let value =
+        command(json!({"op":"prepareMediaPreview","root":root,"path":path,"mime":mime})).await?;
+    preview_token(value)
+}
+#[cfg(target_os = "android")]
+pub async fn remote_preview(
+    url: &str,
+    certificate: &str,
+    size: u64,
+    mime: &str,
+) -> Result<(String, u64)> {
+    let value=command(json!({"op":"prepareRemotePreview","url":url,"certificate":certificate,"size":size,"mime":mime})).await?;
+    preview_token(value)
+}
+#[cfg(target_os = "android")]
+fn preview_token(value: serde_json::Value) -> Result<(String, u64)> {
+    let token = value["token"].as_str().context("Missing preview token")?;
+    uuid::Uuid::parse_str(token).context("Invalid preview token")?;
+    Ok((
+        format!("/native-media-preview/{token}"),
+        value["size"].as_u64().context("Missing media size")?,
+    ))
+}

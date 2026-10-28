@@ -270,3 +270,24 @@ Source snapshot `c8006a33b4f0caebba724959702e214daac9c97a`, mobile run [40637995
 Local validation: 25 JavaScript bridge tests, 23 Rust app tests (2 manual tests ignored), 10 iOS packaging tests, formatting and strict app Clippy passed. Desktop checks passed on Windows, macOS and Linux in run [40637995325](https://github.com/exenreco/Media-Manager/actions/runs/40637995325).
 
 Before production distribution, exercise test interstitial presentation after a successful rename (two-minute initial session delay and ten-minute cooldown), optional rewarded completion and early dismissal, ad-free persistence and expiry, offline/no-fill handling, background/resume, and consent changes on physical devices. No live ad impressions were used for this validation.
+
+### Android preview streaming follow-up
+
+Android previews now stream through a native WebView response for both SAF files
+and paired-server media. Video bytes no longer cross the JavaScript JSON/Base64
+storage bridge. Responses support seeking, suffix ranges and bounded reads;
+selection changes close the previous streams. Paired HTTPS connections retain
+certificate and hostname verification. Inline playback requires Android 8+.
+
+The Rust range/read tests and strict app Clippy passed. The Android ARM64 package
+compiled in mobile validation run 40726928683. Shared popup sheets were checked at
+390x844 and tablet width: API selection, library ordering and artwork sorting use
+the preview sheet geometry, backdrop and dismissal animation. Physical-device
+playback of user media, codec compatibility and long-running network stalls still
+need acceptance testing; a successful build or launch does not validate those.
+
+Follow-up validation run [40726928683](https://github.com/exenreco/Media-Manager/actions/runs/40726928683)
+passed Android ARM64 compilation, Android x86_64 emulator installation/launch and
+iOS ARM64 Simulator installation/launch. Desktop regression checks passed on
+Windows, macOS and Linux in run 40726928231. These remain launch checks rather
+than end-to-end media playback acceptance.
