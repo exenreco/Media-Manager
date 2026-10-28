@@ -104,11 +104,29 @@ pub fn scoped_folder(root: &Path, relative: &str) -> Result<PathBuf> {
     Ok(folder)
 }
 
+/// Containers recognized by the media library; decoding depends on the selected engine.
+pub fn video_mime(path: &Path) -> Option<&'static str> {
+    Some(
+        match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+            "mp4" | "m4v" => "video/mp4",
+            "mkv" => "video/x-matroska",
+            "avi" | "divx" => "video/x-msvideo",
+            "mov" | "qt" => "video/quicktime",
+            "webm" => "video/webm",
+            "ts" | "m2ts" | "mts" => "video/mp2t",
+            "mpeg" | "mpg" | "mpe" | "m2v" | "vob" => "video/mpeg",
+            "wmv" | "asf" => "video/x-ms-asf",
+            "flv" | "f4v" => "video/x-flv",
+            "ogv" | "ogm" => "video/ogg",
+            "3gp" => "video/3gpp",
+            "3g2" => "video/3gpp2",
+            "rm" | "rmvb" => "application/vnd.rn-realmedia",
+            _ => return None,
+        },
+    )
+}
 pub fn is_video(path: &Path) -> bool {
-    path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
-        ["mp4", "mkv", "avi", "mov", "m4v", "webm", "ts", "m2ts"]
-            .contains(&s.to_ascii_lowercase().as_str())
-    })
+    video_mime(path).is_some()
 }
 pub fn is_companion(path: &Path) -> bool {
     path.extension().and_then(|s| s.to_str()).is_some_and(|s| {

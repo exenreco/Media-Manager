@@ -1,3 +1,4 @@
+pub mod compatibility;
 mod library;
 mod media;
 

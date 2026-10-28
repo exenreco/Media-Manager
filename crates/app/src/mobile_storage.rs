@@ -674,3 +674,16 @@ fn preview_token(value: serde_json::Value) -> Result<(String, u64)> {
         value["size"].as_u64().context("Missing media size")?,
     ))
 }
+
+#[cfg(target_os = "android")]
+pub async fn play_compatible_preview(source: String) -> Result<()> {
+    command(json!({"op":"playCompatiblePreview","source":source})).await?;
+    Ok(())
+}
+
+#[cfg(target_os = "ios")]
+pub async fn play_compatible_document(plan: &RenamePlan, index: usize) -> Result<()> {
+    let (root, path) = media_document(plan, index)?;
+    command(json!({"op":"playCompatiblePreview","root":root,"path":path})).await?;
+    Ok(())
+}

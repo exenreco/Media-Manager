@@ -415,6 +415,15 @@ impl Connection {
         plan: RenamePlan,
         index: usize,
     ) -> Result<crate::media_player::Media> {
+        self.preview_media_mode(plan, index, false).await
+    }
+
+    pub async fn preview_media_mode(
+        &self,
+        plan: RenamePlan,
+        index: usize,
+        compatible: bool,
+    ) -> Result<crate::media_player::Media> {
         use crate::media_player::{Location, Media};
         let path = if self.remote {
             plan.tasks
@@ -425,7 +434,11 @@ impl Connection {
         } else {
             tv_manager_core::rename::playback_path(&plan, index)?
         };
-        let mime = crate::media_player::mime(&path);
+        let mime = if compatible {
+            "video/mp4"
+        } else {
+            crate::media_player::mime(&path)
+        };
         let id = uuid::Uuid::new_v4().to_string();
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -437,6 +450,7 @@ impl Connection {
                         crate::mobile_storage::native_preview(&root, &path, mime).await?;
                     return Ok(Media {
                         location: Location::Native(source),
+                        _preview_cache: None,
                         size,
                         mime,
                         id,
@@ -447,6 +461,7 @@ impl Connection {
                 #[cfg(target_os = "ios")]
                 return Ok(Media {
                     location: Location::Document(root, path),
+                    _preview_cache: None,
                     size,
                     mime,
                     id,
@@ -454,9 +469,19 @@ impl Connection {
             }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
+                let converted = if compatible {
+                    Some(tv_manager_server::compatibility::convert(&path).await?)
+                } else {
+                    None
+                };
+                let (path, preview_cache) = match converted {
+                    Some(value) => (value.path, Some(value.directory)),
+                    None => (path, None),
+                };
                 let size = std::fs::metadata(&path)?.len();
                 return Ok(Media {
                     location: Location::File(path),
+                    _preview_cache: preview_cache,
                     size,
                     mime,
                     id,
@@ -465,8 +490,11 @@ impl Connection {
         }
         let (client, url) = self.client()?;
         let response = client
-            .post(url.join(&format!("/v1/plans/{}/tasks/{index}/play", plan.id))?)
-            .timeout(Duration::from_secs(15))
+            .post(url.join(&format!(
+                "/v1/plans/{}/tasks/{index}/play?compatible={compatible}",
+                plan.id
+            ))?)
+            .timeout(Duration::from_secs(75))
             .bearer_auth(&self.token)
             .send()
             .await
@@ -505,6 +533,7 @@ impl Connection {
                     .await?;
             return Ok(Media {
                 location: Location::Native(source),
+                _preview_cache: None,
                 size,
                 mime,
                 id,
@@ -513,6 +542,7 @@ impl Connection {
         #[cfg(not(target_os = "android"))]
         Ok(Media {
             location: Location::Remote(client, stream),
+            _preview_cache: None,
             size,
             mime,
             id,
