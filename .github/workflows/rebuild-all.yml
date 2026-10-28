@@ -103,7 +103,7 @@ jobs:
     timeout-minutes: 60
     env:
       MEDIA_MANAGER_PLAY_BUNDLE: 'true'
-      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384' 
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
     steps:
       - uses: actions/checkout@v4
         with:
