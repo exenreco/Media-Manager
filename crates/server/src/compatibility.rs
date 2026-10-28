@@ -95,10 +95,14 @@ pub async fn convert(path: &Path) -> Result<Preview> {
 }
 
 #[cfg(test)]
+pub(crate) static TEST_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[tokio::test]
     async fn converts_non_browser_codec_and_preserves_original() {
+        let _serial = TEST_SERIAL.lock().await;
         if std::process::Command::new("ffmpeg")
             .arg("-version")
             .output()

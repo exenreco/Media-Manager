@@ -537,7 +537,9 @@ impl Connection {
                 size <= 64 * 1024 * 1024,
                 "Compatibility preview exceeds the download limit"
             );
-            let directory = std::sync::Arc::new(tempfile::tempdir()?);
+            let directory = std::sync::Arc::new(tempfile::tempdir_in(
+                crate::mobile_storage::compatibility_cache().await?,
+            )?);
             let path = directory.path().join("preview.mp4");
             let mut output = tokio::fs::File::create(&path).await?;
             let mut response = client

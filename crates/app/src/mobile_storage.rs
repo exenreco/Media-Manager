@@ -693,3 +693,13 @@ pub async fn play_compatible_cache(path: &std::path::Path) -> Result<()> {
     command(json!({"op":"playCompatibleCache","path":path})).await?;
     Ok(())
 }
+
+#[cfg(target_os = "ios")]
+pub async fn compatibility_cache() -> Result<PathBuf> {
+    let value = command(json!({"op":"appDirectories"})).await?;
+    Ok(PathBuf::from(
+        value["cache"]
+            .as_str()
+            .context("Native preview cache unavailable")?,
+    ))
+}

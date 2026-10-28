@@ -467,7 +467,10 @@ private class LocalStorage(private val activity: MainActivity, private val media
     private fun execute(command: JSONObject): JSONObject {
         if(command.getString("op")=="playCompatiblePreview") {mediaPreviews.play(command.getString("source"));return JSONObject()}
         if(command.getString("op")=="prepareRemotePreview") return mediaPreviews.remote(command)
-        if(command.getString("op")=="stopMediaPreview") {mediaPreviews.clear();return JSONObject()}
+        if(command.getString("op")=="stopMediaPreview") {
+            if(!(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false))) mediaPreviews.clear()
+            return JSONObject()
+        }
         val tree=root(command)
         when(command.getString("op")) {
             "checkFolder" -> {
@@ -917,8 +920,10 @@ private class CompatiblePreview(
         handler.removeCallbacksAndMessages(null)
         runCatching {server.close()};synchronized(sockets){sockets.toList().forEach{runCatching{it.close()}};sockets.clear()}
         workers.shutdownNow()
-        player?.setEventListener(null);player?.stop();player?.detachViews();player?.release();player=null
-        lib?.release();lib=null
+        val oldPlayer=player;val oldEngine=lib;player=null;lib=null
+        oldPlayer?.setEventListener(null);oldPlayer?.detachViews()
+        // Native stop may wait for decoder/network teardown; never wait on the UI thread.
+        Thread({runCatching {oldPlayer?.stop()};runCatching {oldPlayer?.release()};runCatching {oldEngine?.release()}},"media-preview-release").start()
         dialog.dismiss()
     }
     private fun serve(socket:java.net.Socket){

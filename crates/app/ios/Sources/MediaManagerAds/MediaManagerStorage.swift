@@ -48,7 +48,7 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
         if command["op"] as? String == "appDirectories" {
             do {
                 let state = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                reply(command, ["state": state.path])
+                reply(command, ["state": state.path, "cache": FileManager.default.temporaryDirectory.path])
             } catch { reply(command, ["error": error.localizedDescription]) }
             return
         }
