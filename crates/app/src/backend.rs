@@ -557,7 +557,6 @@ impl Connection {
             anyhow::ensure!(length == size, "Incomplete compatibility preview");
             output.flush().await?;
             drop(output);
-            crate::mobile_storage::play_compatible_cache(&path).await?;
             return Ok(Media {
                 location: Location::File(path),
                 size,

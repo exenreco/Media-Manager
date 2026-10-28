@@ -264,6 +264,7 @@ pub fn Inspector(
         let _=document::eval("window.MediaManagerStorage?.postMessage(JSON.stringify({op:'stopMediaPreview',id:'stop-preview'}))");
     });
     media_player::use_media_handler(media);
+    let retry_pending = pending.clone();
     let effect_connection = connection.clone();
     use_effect(move || {
         if let Some(task) = pending.borrow_mut().take() {
@@ -339,10 +340,25 @@ pub fn Inspector(
                 },"Open compatibility player"}
             }
             if !cfg!(target_os="android") && (!cfg!(target_os="ios") || connection.remote) {
-                button {class:"secondary",disabled:loading(),onclick:{let c=connection.clone(); move |_|{
+                button {class:"secondary",disabled:loading(),onclick:{let c=connection.clone(); let pending=retry_pending.clone(); move |_|{
                     let Some(index)=selected() else{return;};let Some(p)=plan.read().clone() else{return;};
                     let c=c.clone();let next=generation.peek().wrapping_add(1);generation.set(next);loading.set(true);media.set(None);error.set(String::new());
-                    spawn(async move {let result=c.preview_media_mode(p,index,true).await;if *generation.peek()!=next{return;}match result {Ok(value)=>media.set(Some(value)),Err(e)=>error.set(format!("Compatibility preview failed: {e:#}"))};loading.set(false);});
+                    if let Some(task)=pending.borrow_mut().take(){task.cancel();}
+                    *pending.borrow_mut()=Some(spawn(async move {
+                        let result=c.preview_media_mode(p,index,true).await;
+                        if *generation.peek()!=next{return;}
+                        match result {
+                            Ok(value)=>{
+                                #[cfg(target_os="ios")]
+                                if let media_player::Location::File(path)=&value.location {
+                                    if let Err(e)=crate::mobile_storage::play_compatible_cache(path).await {error.set(format!("Could not open compatibility player: {e:#}"));}
+                                }
+                                media.set(Some(value));
+                            },
+                            Err(e)=>error.set(format!("Compatibility preview failed: {e:#}"))
+                        };
+                        loading.set(false);
+                    }));
                 }},"Create compatibility preview"}
                 p {class:"hint","Creates a temporary 30-second preview. The original file is kept. Requires FFmpeg on the library computer."}
             }
