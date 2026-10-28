@@ -12,6 +12,8 @@ controlling a library from another device.
 
 ![Media Manager dashboard](Screenshot.png)
 
+Playback compatibility and decoder requirements are documented in [Media playback](docs/PLAYBACK.md).
+
 ## Features
 
 - TV-show and movie modes, optional season selection, Plex/Jellyfin naming and custom templates.

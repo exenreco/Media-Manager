@@ -24,11 +24,11 @@ final class CompatibilityPlayerController: UIViewController {
         let stack=UIStackView(arrangedSubviews:[video,status,slider,controls]);stack.axis = .vertical;stack.spacing=12;stack.translatesAutoresizingMaskIntoConstraints=false
         view.addSubview(stack);NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo:view.safeAreaLayoutGuide.leadingAnchor,constant:16),stack.trailingAnchor.constraint(equalTo:view.safeAreaLayoutGuide.trailingAnchor,constant:-16),stack.topAnchor.constraint(equalTo:view.safeAreaLayoutGuide.topAnchor,constant:16),stack.bottomAnchor.constraint(equalTo:view.safeAreaLayoutGuide.bottomAnchor,constant:-16),controls.heightAnchor.constraint(equalToConstant:48)])
         player.drawable=video;player.media=VLCMedia(url:url);player.play()
-        timer=Timer.scheduledTimer(withTimeInterval:0.5,repeats:true){[weak self] _ in Task{@MainActor in guard let self else{return};self.slider.value=self.player.position;self.status.text=self.player.state == .error ? "Playback failed. Check the file and connection." : "Compatibility player"}}
+        timer=Timer.scheduledTimer(withTimeInterval:0.5,repeats:true){[weak self] _ in Task{@MainActor in guard let self else{return};self.slider.value=Float(self.player.position);self.status.text=self.player.state == .error ? "Playback failed. Check the file and connection." : "Compatibility player"}}
         NotificationCenter.default.addObserver(self,selector:#selector(background),name:UIApplication.didEnterBackgroundNotification,object:nil)
     }
     @objc private func toggle(){if player.isPlaying{player.pause();pauseButton.setTitle("Play",for:.normal)}else{player.play();pauseButton.setTitle("Pause",for:.normal)}}
-    @objc private func seek(){if player.isSeekable{player.position=slider.value}}
+    @objc private func seek(){if player.isSeekable{player.position=Double(slider.value)}}
     @objc private func background(){player.pause();pauseButton.setTitle("Play",for:.normal)}
     @objc private func closePlayer(){dismiss(animated:true)}
     override func viewDidDisappear(_ animated:Bool){super.viewDidDisappear(animated);timer?.invalidate();timer=nil;player.stop();player.drawable=nil;NotificationCenter.default.removeObserver(self);finished()}

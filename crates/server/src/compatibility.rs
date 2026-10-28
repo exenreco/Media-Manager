@@ -131,6 +131,15 @@ mod tests {
         let before = std::fs::read(&input).unwrap();
         let preview = convert(&input).await.unwrap();
         assert_eq!(std::fs::read(&input).unwrap(), before);
+        let decoded = Command::new("ffmpeg")
+            .arg("-i")
+            .arg(&preview.path)
+            .args(["-f", "null", "-"])
+            .output()
+            .await
+            .unwrap();
+        assert!(decoded.status.success());
+        assert!(String::from_utf8_lossy(&decoded.stderr).contains("Video: h264"));
         let bytes = std::fs::read(&preview.path).unwrap();
         assert!(bytes.windows(4).any(|s| s == b"ftyp"));
         let path = preview.path.clone();

@@ -60,6 +60,16 @@ class MainActivity : WryActivity() {
         super.onWebViewCreate(webView)
         browser = webView
         mediaPreviews.attach(webView)
+        // Disposable private fixture, used only by the native playback acceptance harness.
+        if(BuildConfig.DEBUG && intent.getBooleanExtra("media_manager_preview_fixture",false)) {
+            timer.postDelayed({
+                val fixture=java.io.File(filesDir,"compatibility-fixture.mp4")
+                if(fixture.isFile) {
+                    val prepared=mediaPreviews.local(android.net.Uri.fromFile(fixture),fixture.length(),"video/mp4")
+                    mediaPreviews.play("/native-media-preview/"+prepared.getString("token"))
+                }
+            },1500)
+        }
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
         WebViewCompat.addWebMessageListener(webView, "MediaManagerStorage",
             setOf("https://dioxus.index.html")) { _, message, origin, mainFrame, _ ->
@@ -873,6 +883,16 @@ private class CompatiblePreview(
             dialog.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             mediaPlayer.attachViews(video,null,true,false)
             mediaPlayer.setEventListener {event ->
+                if(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false)) {
+                    val state=when(event.type){
+                        org.videolan.libvlc.MediaPlayer.Event.Playing -> "playing"
+                        org.videolan.libvlc.MediaPlayer.Event.EndReached -> "ended"
+                        org.videolan.libvlc.MediaPlayer.Event.EncounteredError -> "error"
+                        org.videolan.libvlc.MediaPlayer.Event.Vout -> if(event.voutCount>0)"video-output" else ""
+                        else -> ""
+                    }
+                    if(state.isNotEmpty())java.io.File(activity.filesDir,"compatibility-fixture-events.txt").appendText("$state\n")
+                }
                 when(event.type) {
                     org.videolan.libvlc.MediaPlayer.Event.Playing -> {status.text="Compatibility player";pause.text="Pause"}
                     org.videolan.libvlc.MediaPlayer.Event.EncounteredError -> status.text="Playback failed. The file may be damaged, protected, or the connection interrupted."
