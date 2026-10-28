@@ -104,3 +104,10 @@ retried briefly at mount. SDK failures are logged under MediaManagerAds.
 A second mobile ad placement appears below the poster panel, above its navigation.
 One native SDK ad view follows the visible placement; the two placeholders do not
 duplicate the same ad view or create extra requests when switching panels.
+
+
+### Fullscreen ads
+
+Interstitials are offered only immediately after a completed rename batch with no failures and at least one renamed file. The native layer requires two minutes in the current session and ten minutes between interstitial impressions. Unavailable ads are skipped; no delayed presentation is queued. Background apps, open dialogs, busy operations and playing videos block UI requests.
+
+Settings offers an optional rewarded ad for 30 minutes without native or fullscreen ads on this device. Only the SDK earned-reward callback saves the expiration in native preferences; closing early gives no reward. The benefit survives app restarts. The SDK controls ad dismissal. Privacy choices gate all requests; changing them discards cached fullscreen ads. Cached ads expire after one hour. Debug builds use Google's test IDs; release builds use the configured production IDs.

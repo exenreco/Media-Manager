@@ -118,9 +118,14 @@ controls are directly accessible on Settings, below Health in navigation.
 At 760 CSS pixels or narrower, a floating bottom capsule replaces the icon rail.
 Its plus button expands into a tool grid; X or Escape closes the grid. Welcome,
 Workspace and Library remain directly accessible from the capsule.
-Selecting a file opens Preview; Library returns to the table. Motion respects the
-system reduced-motion preference. These workspace changes have not been released
-in the v0.1.4 downloads.
+Selecting a file or artwork opens its preview. On Android/iOS and compact desktop
+windows (1050 CSS pixels wide or less, or 650 pixels high or less), previews use a
+rounded black bottom sheet above the library. Drag its handle down, select Back
+or Close, click the dimmed backdrop, or press Escape to return. Short drags snap
+back. The sheet scrolls independently; keyboard focus stays inside until it closes.
+Large desktop windows retain the inline right sidebar. Resizing between these
+layouts keeps the selected item. Motion respects the system reduced-motion
+preference. The sheet change requires a new build after the 1.0.0 beta release.
 
 ## Poster preview and downloads
 
@@ -372,3 +377,10 @@ API details: [TMDB movie search](https://developer.themoviedb.org/reference/sear
 [details](https://developer.themoviedb.org/reference/movie-details), and
 [image URLs](https://developer.themoviedb.org/docs/image-basics).
 Rebuild the backend alongside the app for remote TMDB/custom movie support.
+
+
+### Optional ad-free time on mobile
+
+In Settings, choose **Watch an ad — 30 minutes without ads** to watch an optional rewarded ad. Once the ad confirms that the reward was earned, all ads are paused on that device for 30 minutes, including after restarting the app. Closing before earning the reward does not activate ad-free time. If no ad is ready, try again later; your library tools remain available.
+
+Mobile apps can show an occasional fullscreen advertisement after a successful rename batch. Ads never delay file operations, and unavailable opportunities are skipped.
