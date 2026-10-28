@@ -15,6 +15,7 @@ pub fn PosterInspector(
     plan: Signal<Option<tv_manager_core::rename::RenamePlan>>,
     connection: Signal<crate::backend::Connection>,
     mut busy: Signal<bool>,
+    onclose: EventHandler,
 ) -> Element {
     let mut replace = use_signal(|| false);
     let mut status = use_signal(String::new);
@@ -37,7 +38,7 @@ pub fn PosterInspector(
     let can_save =
         download.starts_with("https://") && (chosen.slot.local_path.is_none() || replace());
     rsx! {section {class:"poster-inspector",
-        div {class:"inspector-heading",h2 {"Poster preview"}button {class:"quiet-icon",title:"Clear poster selection","aria-label":"Clear poster selection",onclick:move |_|selection.set(None),crate::workspace::Icon {name:"close"}}}
+        div {class:"inspector-heading",h2 {"Poster preview"}button {class:"quiet-icon",title:"Clear poster selection","aria-label":"Clear poster selection",onclick:move |_|onclose.call(()),crate::workspace::Icon {name:"close"}}}
         h3 {"{chosen.slot.title}"}
         label {"Preview alternate artwork for" select {value:chosen.slot.id.clone(),onchange:move |e|{
             let item=inventory.peek().iter().find(|p|p.id==e.value()).cloned();
@@ -116,18 +117,12 @@ pub fn compare_posters(
 
 #[component]
 pub fn SortPopup(mut order: Signal<String>, onclose: EventHandler<()>) -> Element {
-    use_effect(move || {
-        let _ = document::eval("document.getElementById('artwork-sort-dialog')?.showModal();");
-    });
-    rsx! {dialog {id:"artwork-sort-dialog",class:"panel controls ordering-dialog artwork-sort-dialog","aria-labelledby":"artwork-sort-title",oncancel:move |_|onclose.call(()),
-        button {class:"ordering-close",r#type:"button",autofocus:true,title:"Close sort options","aria-label":"Close sort options",onclick:move |_|onclose.call(()),crate::workspace::Icon {name:"close"}}
-        h2 {id:"artwork-sort-title","Sort posters"}
+    rsx! {crate::menus::SheetDialog {id:"artwork-sort-dialog",title:"Sort posters",onclose,
         div {class:"poster-sort-options",
             for (value,label) in [("season-asc","Season: first to last"),("season-desc","Season: last to first"),("title-asc","Title: A–Z"),("title-desc","Title: Z–A"),("local-first","Local posters first"),("missing-first","Missing posters first")] {
                 label {class:"check",input {r#type:"radio",name:"poster-sort",value,checked:order()==value,onchange:move |_|order.set(value.into())}"{label}"}
             }
         }
-        button {class:"primary",r#type:"button",onclick:move |_|onclose.call(()),"Done"}
     }}
 }
 #[cfg(test)]

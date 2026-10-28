@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: node --test crates/app/android/tests/native-ad.test.cjs crates/app/tests/mobile-storage.test.cjs
+      - run: node --test crates/app/android/tests/*.test.cjs crates/app/tests/mobile-storage.test.cjs
       - run: python -m unittest discover -s crates/app/ios/tests -p 'test_*.py'
       - run: python -m unittest discover -s scripts/tests -p 'test_mobile_*.py'
 
@@ -38,13 +38,23 @@ jobs:
     needs: bridge-checks
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-android
+            artifact: android-emulator-launch-evidence
+            apk: Media-Manager-emulator.apk
+          - target: aarch64-linux-android
+            artifact: android-device-build
+            apk: Media-Manager-android-arm64.apk
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-linux-android
+          targets: ${{ matrix.target }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -68,22 +78,24 @@ jobs:
           echo "GRADLE_USER_HOME=$gradle_home" >> "$GITHUB_ENV"
           echo "MEDIA_MANAGER_ANDROID_ICONS=$GITHUB_WORKSPACE/assets/branding/icons/android" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
-      - name: Build x86_64 emulator APK with test ads
+      - name: Build Android APK with test ads
         working-directory: crates/app
-        run: dx build --platform android --target x86_64-linux-android --no-default-features --features mobile
+        run: dx build --platform android --target ${{ matrix.target }} --no-default-features --features mobile
       - name: Collect the current build
         run: |
           apk=$(find target/dx -path '*/outputs/apk/debug/*.apk' -type f | head -n 1)
           test -n "$apk"
           mkdir -p target/mobile-validation/android
-          cp "$apk" target/mobile-validation/android/Media-Manager-emulator.apk
-          echo "SMOKE_APK=$GITHUB_WORKSPACE/target/mobile-validation/android/Media-Manager-emulator.apk" >> "$GITHUB_ENV"
+          cp "$apk" target/mobile-validation/android/${{ matrix.apk }}
+          echo "SMOKE_APK=$GITHUB_WORKSPACE/target/mobile-validation/android/${{ matrix.apk }}" >> "$GITHUB_ENV"
       - name: Enable KVM for this disposable CI runner
+        if: matrix.target == 'x86_64-linux-android'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Install and launch in Android emulator
+        if: matrix.target == 'x86_64-linux-android'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -95,7 +107,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-emulator-launch-evidence
+          name: ${{ matrix.artifact }}
           path: target/mobile-validation/android/
           if-no-files-found: warn
           retention-days: 14
