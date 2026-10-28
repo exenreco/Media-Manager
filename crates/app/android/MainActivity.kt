@@ -34,6 +34,11 @@ typealias BuildConfig = com.tvshowmanager.app.BuildConfig
 /** Native ad assets never enter the WebView; the SDK owns clicks and impressions. */
 class MainActivity : WryActivity() {
     private val storage by lazy { LocalStorage(this) }
+    private val fullscreen: FullscreenAds by lazy { FullscreenAds(this,
+        { !dead && foreground && sdkReady && consent?.canRequestAds() == true },
+        { state -> state.put("privacyRequired", consent?.privacyOptionsRequirementStatus == ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED); browser?.evaluateJavascript("window.mediaManagerFullscreenState?.(${state})", null) },
+        { positionAd(); if (!fullscreenSuppressed()) loadAd() }) }
+    private fun fullscreenSuppressed(): Boolean = fullscreen.suppressed
     private var browser: WebView? = null
     private var adView: NativeAdView? = null
     private var nativeAd: NativeAd? = null
@@ -67,6 +72,9 @@ class MainActivity : WryActivity() {
             val data = runCatching { JSONObject(message.data ?: "") }.getOrNull()
                 ?: return@addWebMessageListener
             when (data.optString("type")) {
+                "fullscreen-state" -> { fullscreen.state(); fullscreen.load(); if (!started) { started = true; requestConsent() } }
+                "interstitial" -> fullscreen.show(false)
+                "rewarded" -> { fullscreen.show(true); if (consent?.canRequestAds() != true) requestConsent() }
                 "bounds" -> {
                     updateSafeArea(webView)
                     bounds = data
@@ -82,7 +90,7 @@ class MainActivity : WryActivity() {
                 "hide" -> { bounds = null; adView?.visibility = View.GONE }
                 "privacy" -> if (consent?.privacyOptionsRequirementStatus ==
                     ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED) {
-                    discardAd()
+                    discardAd(); fullscreen.reset()
                     UserMessagingPlatform.showPrivacyOptionsForm(this) {
                         updatePrivacyButton()
                         if (consent?.canRequestAds() == true) initializeAds() else collapse()
@@ -138,6 +146,7 @@ class MainActivity : WryActivity() {
     }
 
     private fun updatePrivacyButton() {
+        fullscreen.state()
         val required = consent?.privacyOptionsRequirementStatus ==
             ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED
         browser?.evaluateJavascript(
@@ -146,20 +155,20 @@ class MainActivity : WryActivity() {
 
     private fun initializeAds() {
         if (dead || consent?.canRequestAds() != true) return
-        if (sdkReady) { loadAd(); return }
+        if (sdkReady) { loadAd(); fullscreen.load(); return }
         if (initializing) return
         initializing = true
         report("Starting advertising…")
         Thread {
             MobileAds.initialize(applicationContext) {
                 sdkReady = true
-                runOnUiThread { initializing = false; if (!dead) loadAd() }
+                runOnUiThread { initializing = false; if (!dead) { loadAd(); fullscreen.load() } }
             }
         }.start()
     }
 
     private fun loadAd() {
-        if (dead || loading || nativeAd != null || consent?.canRequestAds() != true) return
+        if (dead || fullscreenSuppressed() || loading || nativeAd != null || consent?.canRequestAds() != true) return
         loading = true
         report("Loading advertisement…")
         val unit = if (BuildConfig.DEBUG) TEST_UNIT else RELEASE_UNIT
@@ -252,7 +261,7 @@ class MainActivity : WryActivity() {
         val rect = bounds
         val web = browser ?: return
         val expired = android.os.SystemClock.elapsedRealtime() - loadedAt >= 3_600_000
-        if (dead || !foreground || rect == null || !rect.optBoolean("visible") || expired) {
+        if (dead || fullscreenSuppressed() || !foreground || rect == null || !rect.optBoolean("visible") || expired) {
             view.visibility = View.GONE
             if (expired) { discardAd(); collapse() }
             return
@@ -300,7 +309,7 @@ class MainActivity : WryActivity() {
     }
 
     override fun onResume() {
-        super.onResume(); foreground = true; positionAd()
+        super.onResume(); foreground = true; positionAd(); fullscreen.state(); fullscreen.load()
         if (!started && bounds?.optBoolean("eligible") == true) {
             started = true; requestConsent()
         }
@@ -309,7 +318,7 @@ class MainActivity : WryActivity() {
         foreground = false; adView?.visibility = View.GONE; super.onPause()
     }
     override fun onDestroy() {
-        dead = true; discardAd(); storage.close(); browser = null; super.onDestroy()
+        dead = true; fullscreen.close(); discardAd(); storage.close(); browser = null; super.onDestroy()
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).roundToInt()
 
@@ -596,4 +605,106 @@ class PairingCaptureActivity : com.journeyapps.barcodescanner.CaptureActivity() 
         setContentView(root)
         return scanner
     }
+}
+
+/** Fullscreen objects are single use. Entitlements never come from WebView messages. */
+private class FullscreenAds(
+    private val activity: MainActivity,
+    private val allowed: () -> Boolean,
+    private val publish: (JSONObject) -> Unit,
+    private val changed: () -> Unit
+) {
+    private val prefs = activity.getSharedPreferences("advertising", android.content.Context.MODE_PRIVATE)
+    private val handler = Handler(Looper.getMainLooper())
+    private val sessionStart = android.os.SystemClock.elapsedRealtime()
+    private var interstitial: com.google.android.gms.ads.interstitial.InterstitialAd? = null
+    private var rewarded: com.google.android.gms.ads.rewarded.RewardedAd? = null
+    private var interstitialAt = 0L
+    private var rewardedAt = 0L
+    private var loadingInterstitial = false
+    private var loadingRewarded = false
+    private var generation = 0
+    private var closed = false
+    var presenting = false; private set
+    private var earned = false
+    val adFree: Boolean get() = prefs.getLong("adFreeUntil", 0L) > System.currentTimeMillis()
+    val suppressed: Boolean get() = adFree || presenting
+    private val expiry = Runnable { state(); changed(); load() }
+
+    fun state(message: String = "") {
+        if (closed) return
+        publish(JSONObject().put("adFreeUntil", prefs.getLong("adFreeUntil", 0L))
+            .put("presenting", presenting).put("rewardedReady", rewarded != null && fresh(rewardedAt)).put("message", message))
+        handler.removeCallbacks(expiry)
+        if (adFree) handler.postDelayed(expiry, prefs.getLong("adFreeUntil", 0L) - System.currentTimeMillis() + 50)
+    }
+    private fun fresh(time: Long) = android.os.SystemClock.elapsedRealtime() - time < 3_600_000
+    fun reset() { generation++; interstitial = null; rewarded = null; loadingInterstitial = false; loadingRewarded = false; state() }
+    fun close() { closed = true; reset(); handler.removeCallbacksAndMessages(null) }
+    fun load() {
+        if (closed || !allowed() || suppressed) return
+        if (!fresh(interstitialAt)) interstitial = null
+        if (!fresh(rewardedAt)) rewarded = null
+        val epoch = generation
+        if (interstitial == null && !loadingInterstitial) {
+            loadingInterstitial = true
+            val unit = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/1033173712" else "ca-app-pub-9696662815161119/3326470014"
+            com.google.android.gms.ads.interstitial.InterstitialAd.load(activity, unit, AdRequest.Builder().build(),
+                object : com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback() {
+                    override fun onAdLoaded(ad: com.google.android.gms.ads.interstitial.InterstitialAd) {
+                        if (closed || epoch != generation) return
+                        loadingInterstitial = false
+                        if (allowed() && !adFree) { interstitial = ad; interstitialAt = android.os.SystemClock.elapsedRealtime() }
+                        state()
+                    }
+                    override fun onAdFailedToLoad(error: LoadAdError) { if (!closed && epoch == generation) { loadingInterstitial = false; state() } }
+                })
+        }
+        if (rewarded == null && !loadingRewarded) {
+            loadingRewarded = true
+            val unit = if (BuildConfig.DEBUG) "ca-app-pub-3940256099942544/5224354917" else "ca-app-pub-9696662815161119/8879460859"
+            com.google.android.gms.ads.rewarded.RewardedAd.load(activity, unit, AdRequest.Builder().build(),
+                object : com.google.android.gms.ads.rewarded.RewardedAdLoadCallback() {
+                    override fun onAdLoaded(ad: com.google.android.gms.ads.rewarded.RewardedAd) {
+                        if (closed || epoch != generation) return
+                        loadingRewarded = false
+                        if (allowed() && !adFree) { rewarded = ad; rewardedAt = android.os.SystemClock.elapsedRealtime() }
+                        state()
+                    }
+                    override fun onAdFailedToLoad(error: LoadAdError) {
+                        if (!closed && epoch == generation) { loadingRewarded = false; state("No rewarded ad is available. Please try again later.") }
+                    }
+                })
+        }
+    }
+    fun show(reward: Boolean) {
+        if (closed || !allowed() || suppressed || activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus()) return
+        if (!reward && (android.os.SystemClock.elapsedRealtime() - sessionStart < 120_000 ||
+            System.currentTimeMillis() - prefs.getLong("lastInterstitial", 0L) < 600_000)) return
+        if (reward && (rewarded == null || !fresh(rewardedAt))) {
+            rewarded = null; load(); state("Rewarded ad not ready. Please try again shortly."); return
+        }
+        if (!reward && (interstitial == null || !fresh(interstitialAt))) { interstitial = null; load(); return }
+        val full = interstitial; val offer = rewarded
+        if (reward) rewarded = null else interstitial = null
+        presenting = true; earned = false; changed(); state()
+        val callback = object : com.google.android.gms.ads.FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                if (!reward) prefs.edit().putLong("lastInterstitial", System.currentTimeMillis()).apply()
+            }
+            override fun onAdDismissedFullScreenContent() { finish(if (reward && !earned) "Ad closed. No reward was earned." else "") }
+            override fun onAdFailedToShowFullScreenContent(error: com.google.android.gms.ads.AdError) { finish("Ad could not be shown. Please try again later.") }
+        }
+        if (reward) {
+            offer!!.fullScreenContentCallback = callback
+            offer.show(activity) {
+                if (!closed && !earned) {
+                    earned = true
+                    prefs.edit().putLong("adFreeUntil", System.currentTimeMillis() + 1_800_000).apply()
+                    interstitial = null; state(); changed()
+                }
+            }
+        } else { full!!.fullScreenContentCallback = callback; full.show(activity) }
+    }
+    private fun finish(message: String) { presenting = false; state(message); changed(); load() }
 }

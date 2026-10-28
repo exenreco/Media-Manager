@@ -110,7 +110,7 @@ main[data-view=health] .layout>.center-column,main[data-view=health] .layout>.ri
 @media(prefers-reduced-motion:reduce){.health-spinner{animation:none}.health-bar-track span{transition:none}}
 
 /* Library and artwork share one navigation destination and a segmented tab bar. */
-.library-tabs{display:flex;width:fit-content;gap:3px;margin:22px 0 26px;flex-shrink:0}.library-tabs button{min-width:100px}
+.library-tabs{display:flex;width:fit-content;gap:3px;margin:22px 0 26px;flex-shrink:0}.library-tabs button{min-width:100px;white-space:nowrap;flex-shrink:0}
 .artwork-panel>.preview-heading{max-width:none;width:100%;margin-left:0;margin-right:0}.artwork-panel>.library-tabs{margin-left:0;margin-right:0}
 @media(max-width:760px){.dock-tab{flex:1}.artwork-panel>.library-tabs{margin-left:0}.library-tabs{width:100%}.library-tabs button{flex:1}}
 

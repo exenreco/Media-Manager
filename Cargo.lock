@@ -5783,7 +5783,7 @@ dependencies = [
 
 [[package]]
 name = "tv-manager-app"
-version = "1.0.0-beta"
+version = "1.0.0-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5808,7 +5808,7 @@ dependencies = [
 
 [[package]]
 name = "tv-manager-core"
-version = "1.0.0-beta"
+version = "1.0.0-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5829,7 +5829,7 @@ dependencies = [
 
 [[package]]
 name = "tv-manager-server"
-version = "1.0.0-beta"
+version = "1.0.0-beta.2"
 dependencies = [
  "anyhow",
  "axum",

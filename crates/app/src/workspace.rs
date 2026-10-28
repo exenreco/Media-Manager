@@ -21,6 +21,7 @@ pub fn Icon(name: String) -> Element {
         "close" => "m6 6 12 12 M6 18 18 6",
         "more" => "M5 12h.01 M12 12h.01 M19 12h.01",
         "play" => "m8 4 12 8-12 8V4Z",
+        "chevron-down" => "m6 9 6 6 6-6",
         "back" => "m14 5-7 7 7 7",
         "minimize" => "M5 12h14",
         "maximize" => "M5 5h14v14H5z",
@@ -201,6 +202,42 @@ pub fn Navigation(active: Signal<&'static str>, onnavigate: EventHandler<&'stati
 }
 
 #[component]
+pub fn PreviewPanel(onclose: EventHandler, children: Element) -> Element {
+    use_effect(move || {
+        let mut bridge = document::eval(include_str!("preview-sheet.js"));
+        spawn(async move {
+            while let Ok(action) = bridge.recv::<String>().await {
+                if action == "dismiss" {
+                    onclose.call(());
+                }
+            }
+        });
+    });
+    use_drop(|| {
+        let _ = document::eval("window.mediaManagerPreviewSheet?.cleanup()");
+    });
+    rsx! {
+        button {class:"preview-sheet-backdrop",r#type:"button",tabindex:"-1","aria-label":"Close preview",onclick:move |_|close_preview()}
+        section {class:"panel controls right-panel preview-sheet",id:"media-inspector-sidebar",role:"region","aria-label":"Media and artwork preview",tabindex:"-1",
+            div {class:"preview-sheet-chrome",
+                div {class:"preview-sheet-grip", "aria-label":"Drag down to close preview",
+                    span {"aria-hidden":"true"}
+                }
+                div {class:"preview-sheet-toolbar",
+                    button {class:"preview-sheet-back",r#type:"button","aria-label":"Back to library",onclick:move |_|close_preview(),Icon {name:"back"}}
+                    button {class:"preview-sheet-close",r#type:"button","aria-label":"Close preview",onclick:move |_|close_preview(),Icon {name:"close"}}
+                }
+            }
+            div {class:"preview-sheet-content",{children}}
+        }
+    }
+}
+
+pub fn close_preview() {
+    let _ = document::eval("window.mediaManagerPreviewSheet?.dismiss()");
+}
+
+#[component]
 pub fn Inspector(
     mut selected: Signal<Option<usize>>,
     mut plan: Signal<Option<RenamePlan>>,
@@ -208,6 +245,7 @@ pub fn Inspector(
     disabled: bool,
     mut busy: Signal<bool>,
     mut message: Signal<String>,
+    onclose: EventHandler,
 ) -> Element {
     let mut media = use_signal(|| None::<media_player::Media>);
     let mut error = use_signal(String::new);
@@ -253,7 +291,7 @@ pub fn Inspector(
     });
     let task = selected().and_then(|i| plan.read().as_ref().and_then(|p| p.tasks.get(i).cloned()));
     rsx! {section {class:"media-inspector","aria-label":"Selected media",
-        div {class:"inspector-heading",h2 {"File preview"} if selected().is_some() {button {class:"quiet-icon",title:"Clear selection","aria-label":"Clear selection",onclick:move|_|selected.set(None),Icon {name:"close"}}}}
+        div {class:"inspector-heading",h2 {"File preview"} if selected().is_some() {button {class:"quiet-icon",title:"Clear selection","aria-label":"Clear selection",onclick:move|_|onclose.call(()),Icon {name:"close"}}}}
         if let Some(task)=task {
             div {class:"video-stage",
                 if let Some(value)=media.read().as_ref() {

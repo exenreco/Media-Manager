@@ -1,43 +1,26 @@
-# Media Manager 1.0.0 beta
+# Media Manager 1.0.0 beta 2
 
 ## Changes
 
-- Redesigned desktop workspace with an icon rail, custom title bar, resizable media inspector and inline video preview/title editing.
-- Updated Android and iOS layouts with larger readable text, safe-area spacing and animated bottom navigation.
-- Added Get Started connection setup, Local/Remote tabs, API settings and connection checks before entering the workspace.
-- Details changes refresh the rename preview automatically. Ordering and saved profiles are available from the Library ordering popup.
-- Combined Library and Art Work views, with searchable/sortable responsive poster grids, local artwork inventory, side-by-side replacement previews and explicit single/bulk poster downloads.
-- Added automatic library health scans and charts; rename history and explicit Undo are on Settings.
-- Added TMDB movie matching and TMDB-compatible custom movie providers, including optional year filtering.
-- Added camera-based single-use QR pairing with authenticated local HTTPS sharing and pinned server certificates.
-- Added Windows setup, macOS PKG and Debian/Ubuntu DEB installers while retaining portable archives and Linux Flatpak.
+- Added animated black preview sheets for media and artwork on phones and compact desktop windows, with swipe dismissal, keyboard handling and focus restoration.
+- Added matching mobile sheets for API provider selection, artwork sorting and library ordering.
+- Restored the rounded gray bottom navigation capsule while keeping its outer container transparent; removed Android tap-highlight boxes and added spacing above Stop sharing.
+- Kept the Library / Art Work tab labels on one line on narrow screens.
+- Added Android and iOS interstitial ads after successful rename batches, with a two-minute initial session delay and ten-minute cooldown. Unavailable ads are skipped.
+- Added optional rewarded ads in Settings for 30 minutes without ads on that device. Only the SDK earned-reward callback grants the benefit, which survives app restarts.
+- Added consent-aware fullscreen ad loading, cache expiry and privacy options. Debug mobile previews use Google test ads.
+- Expanded mobile validation to build both Android ARM64 phone and x86_64 emulator APKs.
 
-## Downloads
+## Downloads and validation
 
-Platform jobs attach assets and SHA-256 checksums as they finish:
+Platform jobs attach packages and SHA-256 checksums as they complete: Windows x64 setup and portable ZIP; macOS Apple Silicon and Intel PKG and ZIP; Linux x64 DEB, TAR.GZ and Flatpak; Android ARM64 preview APK; iOS ARM64 simulator ZIP.
 
-- Windows x64 setup EXE and portable ZIP, including the optional server. Setup installs WebView2 if missing.
-- macOS Apple Silicon and Intel PKG installers and portable ZIPs, including the optional server.
-- Linux x64 DEB for Ubuntu 24.04-compatible systems, TAR.GZ and Flatpak with managed GTK/WebKitGTK runtime.
-- Android ARM64 debug-signed beta APK with Google test ads.
-- iOS ARM64 **Simulator-only** ZIP for Xcode on a Mac; this is not an installable iPhone IPA.
+The source preceding this version bump passed 25 JavaScript bridge tests, 23 Rust app tests (two manual tests ignored), 10 iOS packaging tests and strict Clippy. Native installer checks passed on Windows, both macOS architectures and Linux. Android emulator and iOS simulator installation and launch passed. Release packages are rebuilt from this tag.
 
-## Validation and limits
+## Limits
 
-Native installer validation passed Windows install/upgrade/startup/uninstall,
-installation/reinstall on both Mac architectures, and Linux dependency installation,
-launcher/startup/removal. Android and iOS builds and simulator startup passed on
-preceding design snapshots; the final beta release is rebuilt from its tag.
-Physical-device and full provider acceptance remain pending. Android advertising
-privacy checks/ad delivery remain unresolved. No live TMDB account test was made.
+Mobile previews use test ads. Fullscreen playback, earned rewards and early dismissal still need physical-device acceptance. Permanent paid ad removal is not implemented while store account setup is pending.
 
-Windows publisher signing requires configured credentials. macOS apps are ad-hoc
-signed; PKGs are not Developer ID signed or notarized. Android uses a CI debug key;
-iOS device distribution requires Apple provisioning. Mobile background execution
-and notifications remain unfinished. Linux DEB/TAR.GZ use compatible host libraries;
-Flatpak supplies a managed GNOME 49 runtime.
+The iOS ZIP is simulator-only, not an installable iPhone IPA. Device distribution requires Apple signing and provisioning. Android previews are CI debug-signed; upgrading an older preview may require reinstalling if its signing key differs. Windows publisher signing needs configured credentials. macOS apps are ad-hoc signed; installers are not Developer ID signed or notarized.
 
-Renames require confirmation and can partially succeed. Review destinations and
-inspect recorded Undo results. Poster replacement requires explicit consent.
-Original code is Apache 2.0 licensed; dependencies, SDKs and provider data retain
-their own terms. See README and the installation/mobile validation documentation.
+Linux DEB/TAR.GZ require compatible host libraries; Flatpak supplies its managed GNOME 49 GTK/WebKitGTK runtime. Mobile background execution and notifications remain unfinished. Review rename destinations before confirming; operations can partially succeed. Original code is Apache 2.0 licensed; dependencies, SDKs and provider data retain their own terms.
