@@ -27,6 +27,8 @@ pub async fn convert(path: &Path) -> Result<Preview> {
             "-hide_banner",
             "-loglevel",
             "error",
+            "-format_whitelist",
+            "mov,matroska,webm,avi,asf,mpeg,mpegts,flv,ogg,rm,h264,hevc,m4v,mjpeg",
             "-protocol_whitelist",
             "file,pipe",
             "-i",
@@ -105,7 +107,7 @@ mod tests {
             return;
         }
         let folder = tempfile::tempdir().unwrap();
-        let input = folder.path().join("source.avi");
+        let input = folder.path().join("source.mp4");
         let result = Command::new("ffmpeg")
             .args([
                 "-nostdin",

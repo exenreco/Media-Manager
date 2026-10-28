@@ -79,6 +79,17 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
         }
         // File coordination and cloud-provider I/O must not block the UI thread.
         let operation = command["op"] as? String ?? ""
+        if operation == "playCompatibleCache" {
+            do {
+                let file=URL(fileURLWithPath:command["path"] as? String ?? "").resolvingSymlinksInPath()
+                let cache=FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path+"/"
+                guard file.path.hasPrefix(cache),file.lastPathComponent=="preview.mp4",let controller,controller.presentedViewController == nil else {throw fail("Invalid compatibility preview or another dialog is open")}
+                let preview=CompatibilityPlayerController(url:file) {}
+                preview.modalPresentationStyle = .fullScreen
+                controller.present(preview,animated:true);reply(command,[:])
+            }catch{reply(command,["error":error.localizedDescription])}
+            return
+        }
         if operation == "play" || operation == "playCompatiblePreview" {
             do {
                 let root = try folder(command)

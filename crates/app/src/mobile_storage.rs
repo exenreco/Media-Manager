@@ -687,3 +687,9 @@ pub async fn play_compatible_document(plan: &RenamePlan, index: usize) -> Result
     command(json!({"op":"playCompatiblePreview","root":root,"path":path})).await?;
     Ok(())
 }
+
+#[cfg(target_os = "ios")]
+pub async fn play_compatible_cache(path: &std::path::Path) -> Result<()> {
+    command(json!({"op":"playCompatibleCache","path":path})).await?;
+    Ok(())
+}

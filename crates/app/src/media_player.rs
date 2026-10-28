@@ -11,7 +11,7 @@ const CHUNK: u64 = 1024 * 1024;
 
 #[derive(Clone)]
 pub enum Location {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(target_os = "android"))]
     File(std::path::PathBuf),
     #[cfg(not(target_os = "android"))]
     Remote(reqwest::Client, String),
@@ -76,9 +76,11 @@ fn range(value: Option<&str>, size: u64) -> Result<(u64, u64)> {
 impl Media {
     pub fn source(&self) -> String {
         #[cfg(target_os = "android")]
-        if let Location::Native(source) = &self.location {
-            return source.clone();
+        {
+            let Location::Native(source) = &self.location;
+            source.clone()
         }
+        #[cfg(not(target_os = "android"))]
         format!("/media-preview/{}", self.id)
     }
 
@@ -90,7 +92,7 @@ impl Media {
         match &self.location {
             #[cfg(target_os = "android")]
             Location::Native(_) => bail!("Native media streams are handled by Android"),
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            #[cfg(not(target_os = "android"))]
             Location::File(path) => {
                 use std::io::{Read, Seek};
                 let path = path.clone();

@@ -500,10 +500,14 @@ impl Connection {
             .await
             .map_err(|_| anyhow::anyhow!("Could not connect to the media server"))?;
         if !response.status().is_success() {
-            bail!(
-                "Could not start playback (HTTP {}). Refresh the library preview and try again.",
-                response.status()
-            );
+            let status = response.status();
+            let detail = response
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v["error"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| "Refresh the library and try again.".into());
+            bail!("Could not start playback (HTTP {status}): {detail}");
         }
         let value: serde_json::Value =
             response.json().await.context("Invalid playback response")?;
@@ -526,6 +530,40 @@ impl Connection {
             .context("Missing media size")?
             .to_str()?
             .parse()?;
+        #[cfg(target_os = "ios")]
+        if compatible {
+            use tokio::io::AsyncWriteExt;
+            anyhow::ensure!(
+                size <= 64 * 1024 * 1024,
+                "Compatibility preview exceeds the download limit"
+            );
+            let directory = std::sync::Arc::new(tempfile::tempdir()?);
+            let path = directory.path().join("preview.mp4");
+            let mut output = tokio::fs::File::create(&path).await?;
+            let mut response = client
+                .get(&stream)
+                .timeout(Duration::from_secs(75))
+                .send()
+                .await?
+                .error_for_status()?;
+            let mut length = 0u64;
+            while let Some(bytes) = response.chunk().await? {
+                length += bytes.len() as u64;
+                anyhow::ensure!(length <= size, "Invalid compatibility preview size");
+                output.write_all(&bytes).await?;
+            }
+            anyhow::ensure!(length == size, "Incomplete compatibility preview");
+            output.flush().await?;
+            drop(output);
+            crate::mobile_storage::play_compatible_cache(&path).await?;
+            return Ok(Media {
+                location: Location::File(path),
+                size,
+                mime,
+                id,
+                _preview_cache: Some(directory),
+            });
+        }
         #[cfg(target_os = "android")]
         {
             let (source, size) =

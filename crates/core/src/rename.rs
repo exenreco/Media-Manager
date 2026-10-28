@@ -108,7 +108,7 @@ pub fn scoped_folder(root: &Path, relative: &str) -> Result<PathBuf> {
 pub fn video_mime(path: &Path) -> Option<&'static str> {
     Some(
         match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
-            "mp4" | "m4v" => "video/mp4",
+            "mp4" | "m4v" | "f4v" => "video/mp4",
             "mkv" => "video/x-matroska",
             "avi" | "divx" => "video/x-msvideo",
             "mov" | "qt" => "video/quicktime",
@@ -116,7 +116,7 @@ pub fn video_mime(path: &Path) -> Option<&'static str> {
             "ts" | "m2ts" | "mts" => "video/mp2t",
             "mpeg" | "mpg" | "mpe" | "m2v" | "vob" => "video/mpeg",
             "wmv" | "asf" => "video/x-ms-asf",
-            "flv" | "f4v" => "video/x-flv",
+            "flv" => "video/x-flv",
             "ogv" | "ogm" => "video/ogg",
             "3gp" => "video/3gpp",
             "3g2" => "video/3gpp2",
@@ -716,4 +716,25 @@ pub fn apply(plan: &mut RenamePlan) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod media_format_tests {
+    use super::*;
+    #[test]
+    fn library_recognizes_video_containers_without_treating_sidecars_as_video() {
+        for extension in [
+            "MP4", "mkv", "avi", "mpg", "mpeg", "vob", "wmv", "asf", "flv", "f4v", "ogv", "3gp",
+            "3g2", "rmvb", "mts", "m2ts",
+        ] {
+            assert!(
+                is_video(Path::new(&format!("sample.{extension}"))),
+                "{extension}"
+            );
+        }
+        for extension in ["srt", "nfo", "jpg", "txt", "exe"] {
+            assert!(!is_video(Path::new(&format!("sample.{extension}"))));
+        }
+        assert_eq!(video_mime(Path::new("sample.f4v")), Some("video/mp4"));
+    }
 }
