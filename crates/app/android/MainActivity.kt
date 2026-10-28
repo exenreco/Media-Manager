@@ -60,6 +60,16 @@ class MainActivity : WryActivity() {
         super.onWebViewCreate(webView)
         browser = webView
         mediaPreviews.attach(webView)
+        // Disposable private fixture, used only by the native playback acceptance harness.
+        if(BuildConfig.DEBUG && intent.getBooleanExtra("media_manager_preview_fixture",false)) {
+            timer.postDelayed({
+                val fixture=java.io.File(filesDir,"compatibility-fixture.mp4")
+                if(fixture.isFile) {
+                    val prepared=mediaPreviews.local(android.net.Uri.fromFile(fixture),fixture.length(),"video/mp4")
+                    mediaPreviews.play("/native-media-preview/"+prepared.getString("token"))
+                }
+            },1500)
+        }
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
         WebViewCompat.addWebMessageListener(webView, "MediaManagerStorage",
             setOf("https://dioxus.index.html")) { _, message, origin, mainFrame, _ ->
@@ -317,7 +327,7 @@ class MainActivity : WryActivity() {
         }
     }
     override fun onPause() {
-        foreground = false; adView?.visibility = View.GONE; super.onPause()
+        foreground = false; mediaPreviews.pause(); adView?.visibility = View.GONE; super.onPause()
     }
     override fun onDestroy() {
         dead = true; fullscreen.close(); discardAd(); mediaPreviews.clear(); storage.close(); browser = null; super.onDestroy()
@@ -455,8 +465,12 @@ private class LocalStorage(private val activity: MainActivity, private val media
         return doc
     }
     private fun execute(command: JSONObject): JSONObject {
+        if(command.getString("op")=="playCompatiblePreview") {mediaPreviews.play(command.getString("source"));return JSONObject()}
         if(command.getString("op")=="prepareRemotePreview") return mediaPreviews.remote(command)
-        if(command.getString("op")=="stopMediaPreview") {mediaPreviews.clear();return JSONObject()}
+        if(command.getString("op")=="stopMediaPreview") {
+            if(!(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false))) mediaPreviews.clear()
+            return JSONObject()
+        }
         val tree=root(command)
         when(command.getString("op")) {
             "checkFolder" -> {
@@ -479,7 +493,7 @@ private class LocalStorage(private val activity: MainActivity, private val media
             }
             "prepareMediaPreview" -> {
                 val doc=resolve(tree,command.getString("path"));require(!doc.dir)
-                val mime=command.getString("mime");require(mime.startsWith("video/"))
+                val mime=command.getString("mime");require(mime.startsWith("video/") || mime == "application/vnd.rn-realmedia")
                 return mediaPreviews.local(doc.uri,doc.size,mime)
             }
             "readMedia" -> {
@@ -724,6 +738,7 @@ private class MediaPreviews(private val activity: MainActivity) {
     private val sources = java.util.concurrent.ConcurrentHashMap<String, Source>()
     private val streams = java.util.Collections.synchronizedSet(mutableSetOf<java.io.InputStream>())
     private var supported = false
+    private var compatible: CompatiblePreview? = null
     fun attach(web: WebView) {
         if (android.os.Build.VERSION.SDK_INT < 26) return
         val original = web.webViewClient
@@ -744,7 +759,17 @@ private class MediaPreviews(private val activity: MainActivity) {
         }
         supported = true
     }
+    fun play(source: String) {
+        val token = source.removePrefix("/native-media-preview/")
+        require(source == "/native-media-preview/$token" && sources.containsKey(token)) { "Preview expired; select the file again" }
+        activity.runOnUiThread {
+            compatible?.close()
+            compatible = CompatiblePreview(activity, token, ::response).also { it.show() }
+        }
+    }
+    fun pause(){activity.runOnUiThread {compatible?.pause()}}
     fun clear() {
+        activity.runOnUiThread { compatible?.close(); compatible = null }
         sources.clear()
         synchronized(streams) { streams.toList().forEach { runCatching { it.close() } }; streams.clear() }
     }
@@ -826,4 +851,105 @@ internal fun previewRange(value:String?,size:Long):Pair<Long,Long> {
     if(parts[0].isEmpty()){val count=parts[1].toLong().coerceAtMost(size);require(count>0);return size-count to size-1}
     val start=parts[0].toLong();val end=if(parts[1].isEmpty())size-1 else parts[1].toLong().coerceAtMost(size-1)
     require(start>=0 && start<size && end>=start);return start to end
+}
+/** libVLC decoding stays out of the WebView. The loopback gateway preserves pinned TLS upstream. */
+private class CompatiblePreview(
+    private val activity: MainActivity,
+    private val token: String,
+    private val response: (android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse
+) {
+    private val dialog = android.app.Dialog(activity)
+    private val server = java.net.ServerSocket(0, 4, java.net.InetAddress.getByName("127.0.0.1"))
+    private val workers = java.util.concurrent.ThreadPoolExecutor(2,2,0L,java.util.concurrent.TimeUnit.SECONDS,java.util.concurrent.ArrayBlockingQueue<Runnable>(4))
+    private val sockets = java.util.Collections.synchronizedSet(mutableSetOf<java.net.Socket>())
+    private val handler = Handler(Looper.getMainLooper())
+    private var lib: org.videolan.libvlc.LibVLC? = null
+    private var player: org.videolan.libvlc.MediaPlayer? = null
+    @Volatile private var closed = false
+    fun show() {
+        try {
+            val engine=org.videolan.libvlc.LibVLC(activity,arrayListOf("--no-video-title-show","--network-caching=1000"));lib=engine
+            val mediaPlayer=org.videolan.libvlc.MediaPlayer(engine);player=mediaPlayer
+            val column=LinearLayout(activity).apply {orientation=LinearLayout.VERTICAL;setBackgroundColor(Color.BLACK)}
+            val status=TextView(activity).apply {text="Preparing compatibility player…";setTextColor(Color.WHITE);setPadding(16,16,16,16)}
+            val video=org.videolan.libvlc.util.VLCVideoLayout(activity)
+            column.addView(video,LinearLayout.LayoutParams(-1,0,1f));column.addView(status)
+            val seek=android.widget.SeekBar(activity).apply {max=1000;contentDescription="Playback position"}
+            column.addView(seek)
+            val controls=LinearLayout(activity).apply {gravity=Gravity.CENTER}
+            val pause=Button(activity).apply {text="Pause";setOnClickListener {if(mediaPlayer.isPlaying){mediaPlayer.pause();text="Play"}else{mediaPlayer.play();text="Pause"}}}
+            controls.addView(pause)
+            controls.addView(Button(activity).apply {text="Close";setOnClickListener {close()}})
+            column.addView(controls)
+            dialog.setContentView(column);dialog.setOnDismissListener {close()}
+            dialog.show();dialog.window?.setLayout(-1,-1)
+            dialog.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            mediaPlayer.attachViews(video,null,true,false)
+            mediaPlayer.setEventListener {event ->
+                if(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false)) {
+                    val state=when(event.type){
+                        org.videolan.libvlc.MediaPlayer.Event.Playing -> "playing"
+                        org.videolan.libvlc.MediaPlayer.Event.EndReached -> "ended"
+                        org.videolan.libvlc.MediaPlayer.Event.EncounteredError -> "error"
+                        org.videolan.libvlc.MediaPlayer.Event.Vout -> if(event.voutCount>0)"video-output" else ""
+                        else -> ""
+                    }
+                    if(state.isNotEmpty())java.io.File(activity.filesDir,"compatibility-fixture-events.txt").appendText("$state\n")
+                }
+                when(event.type) {
+                    org.videolan.libvlc.MediaPlayer.Event.Playing -> {status.text="Compatibility player";pause.text="Pause"}
+                    org.videolan.libvlc.MediaPlayer.Event.EncounteredError -> status.text="Playback failed. The file may be damaged, protected, or the connection interrupted."
+                    org.videolan.libvlc.MediaPlayer.Event.EndReached -> {status.text="Playback finished";pause.text="Play"}
+                    org.videolan.libvlc.MediaPlayer.Event.Buffering -> status.text="Buffering ${event.buffering.toInt()}%"
+                }
+            }
+            seek.setOnSeekBarChangeListener(object:android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar:android.widget.SeekBar,progress:Int,user:Boolean){if(user && mediaPlayer.isSeekable)mediaPlayer.position=progress/1000f}
+                override fun onStartTrackingTouch(bar:android.widget.SeekBar){}
+                override fun onStopTrackingTouch(bar:android.widget.SeekBar){}
+            })
+            val tick=object:Runnable {override fun run(){if(!closed){seek.progress=(mediaPlayer.position*1000).toInt().coerceIn(0,1000);handler.postDelayed(this,500)}}};handler.post(tick)
+            Thread({while(!closed){try{val socket=server.accept();sockets.add(socket);try{workers.execute {serve(socket)}}catch(_:java.util.concurrent.RejectedExecutionException){sockets.remove(socket);socket.close()}}catch(_:java.io.IOException){break}}},"media-preview-gateway").start()
+            val media=org.videolan.libvlc.Media(engine,android.net.Uri.parse("http://127.0.0.1:${server.localPort}/$token"))
+            media.setHWDecoderEnabled(true,false);mediaPlayer.media=media;media.release();mediaPlayer.play()
+        }catch(error:Exception){android.util.Log.w("MediaManagerPlayback","Compatibility player initialization failed",error);close();android.widget.Toast.makeText(activity,"Could not start compatibility player",android.widget.Toast.LENGTH_LONG).show()}
+    }
+    fun pause(){player?.pause()}
+    fun close(){
+        if(closed)return;closed=true
+        handler.removeCallbacksAndMessages(null)
+        runCatching {server.close()};synchronized(sockets){sockets.toList().forEach{runCatching{it.close()}};sockets.clear()}
+        workers.shutdownNow()
+        val oldPlayer=player;val oldEngine=lib;player=null;lib=null
+        oldPlayer?.setEventListener(null);oldPlayer?.detachViews()
+        // Native stop may wait for decoder/network teardown; never wait on the UI thread.
+        Thread({runCatching {oldPlayer?.stop()};runCatching {oldPlayer?.release()};runCatching {oldEngine?.release()}},"media-preview-release").start()
+        dialog.dismiss()
+    }
+    private fun serve(socket:java.net.Socket){
+        try{socket.use {
+            socket.soTimeout=10000
+            val input=socket.getInputStream();var budget=8192
+            fun line():String {val data=java.io.ByteArrayOutputStream();while(true){require(--budget>=0);val c=input.read();require(c>=0);if(c==10)break;if(c!=13)data.write(c)};return data.toString("US-ASCII")}
+            val first=line().split(' ');require(first.size==3 && first[0] in listOf("GET","HEAD") && first[1]=="/$token")
+            val headers=mutableMapOf<String,String>();while(true){val h=line();if(h.isEmpty())break;val colon=h.indexOf(':');require(colon>0);headers[h.substring(0,colon).trim()]=h.substring(colon+1).trim()}
+            val request=object:android.webkit.WebResourceRequest {
+                override fun getUrl()=android.net.Uri.parse("https://dioxus.index.html/native-media-preview/$token")
+                override fun isForMainFrame()=false
+                override fun isRedirect()=false
+                override fun hasGesture()=false
+                override fun getMethod()=first[0]
+                override fun getRequestHeaders()=headers
+            }
+            val result=response(request)
+            result.data.use {body ->
+                val out=socket.getOutputStream()
+                val head=StringBuilder("HTTP/1.1 ${result.statusCode} ${result.reasonPhrase}\r\nConnection: close\r\nContent-Type: ${result.mimeType}\r\n")
+                result.responseHeaders?.forEach{(k,v)->head.append("$k: $v\r\n")};head.append("\r\n")
+                out.write(head.toString().toByteArray(Charsets.US_ASCII))
+                if(first[0]=="GET")body?.copyTo(out,64*1024)
+                out.flush()
+            }
+        }}catch(_:Exception){runCatching{socket.close()}}finally{sockets.remove(socket)}
+    }
 }

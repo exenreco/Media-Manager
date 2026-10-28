@@ -1,7 +1,7 @@
 use super::{authenticate, error, ApiError, AppState};
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -18,10 +18,12 @@ use uuid::Uuid;
 
 const LIFETIME: Duration = Duration::from_secs(900);
 
+type Ticket = (Instant, Uuid, usize, Option<crate::compatibility::Preview>);
+
 #[derive(Default)]
 pub struct Playback {
     completed: Mutex<HashMap<Uuid, (Instant, RenamePlan)>>,
-    tickets: Mutex<HashMap<Uuid, (Instant, Uuid, usize)>>,
+    tickets: Mutex<HashMap<Uuid, Ticket>>,
 }
 
 impl Playback {
@@ -71,20 +73,37 @@ fn find_plan(state: &AppState, id: Uuid) -> Result<RenamePlan, ApiError> {
     ))
 }
 
+#[derive(serde::Deserialize, Default)]
+pub struct PlaybackOptions {
+    #[serde(default)]
+    compatible: bool,
+}
+
 pub async fn ticket(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((id, index)): Path<(Uuid, usize)>,
+    Query(options): Query<PlaybackOptions>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     authenticate(&state, &headers)?;
-    playback_path(&find_plan(&state, id)?, index).map_err(|e| error(StatusCode::BAD_REQUEST, e))?;
+    let path = playback_path(&find_plan(&state, id)?, index)
+        .map_err(|e| error(StatusCode::BAD_REQUEST, e))?;
+    let preview = if options.compatible {
+        Some(
+            crate::compatibility::convert(&path)
+                .await
+                .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?,
+        )
+    } else {
+        None
+    };
     let mut tickets = state.media.tickets.lock().map_err(|_| {
         error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Playback store unavailable",
         )
     })?;
-    tickets.retain(|_, (created, _, _)| created.elapsed() < LIFETIME);
+    tickets.retain(|_, (created, _, _, _)| created.elapsed() < LIFETIME);
     if tickets.len() >= 64 {
         return Err(error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -92,7 +111,7 @@ pub async fn ticket(
         ));
     }
     let ticket = Uuid::new_v4();
-    tickets.insert(ticket, (Instant::now(), id, index));
+    tickets.insert(ticket, (Instant::now(), id, index, preview));
     Ok(Json(serde_json::json!({ "ticket": ticket })))
 }
 
@@ -123,7 +142,7 @@ pub async fn stream(
     headers: HeaderMap,
     Path(ticket): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let (created, id, index) = state
+    let (created, id, index, preview) = state
         .media
         .tickets
         .lock()
@@ -134,7 +153,7 @@ pub async fn stream(
             )
         })?
         .get(&ticket)
-        .copied()
+        .cloned()
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "Playback link not found"))?;
     if created.elapsed() >= LIFETIME {
         return Err(error(
@@ -142,22 +161,11 @@ pub async fn stream(
             "Playback link expired; press Play again",
         ));
     }
-    let path = playback_path(&find_plan(&state, id)?, index)
+    let original = playback_path(&find_plan(&state, id)?, index)
         .map_err(|e| error(StatusCode::NOT_FOUND, e))?;
-    let content_type = match path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
-        "webm" => "video/webm",
-        "ts" | "m2ts" => "video/mp2t",
-        "mkv" => "video/x-matroska",
-        _ => "video/x-msvideo",
-    };
+    let path = preview.as_ref().map(|p| p.path.clone()).unwrap_or(original);
+    let content_type =
+        tv_manager_core::rename::video_mime(&path).unwrap_or("application/octet-stream");
     let mut file = tokio::fs::File::open(path)
         .await
         .map_err(|_| error(StatusCode::NOT_FOUND, "Media file is unavailable"))?;

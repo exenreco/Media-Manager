@@ -147,7 +147,7 @@ def main():
     plugin = frameworks / 'DioxusSwiftPlugins.framework' / 'DioxusSwiftPlugins'
     if not plugin.is_file():
         parser.error('Dioxus did not build the Swift plugin; rebuild with Dioxus CLI 0.7.10')
-    for name in ['GoogleMobileAds', 'UserMessagingPlatform']:
+    for name in ['GoogleMobileAds', 'UserMessagingPlatform', 'VLCKit']:
         matches = list(args.artifacts.resolve(strict=True).rglob(name + '.xcframework'))
         if len(matches) != 1:
             parser.error(f'Expected one {name}.xcframework under --artifacts; found {len(matches)}')

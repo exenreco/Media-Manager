@@ -415,6 +415,15 @@ impl Connection {
         plan: RenamePlan,
         index: usize,
     ) -> Result<crate::media_player::Media> {
+        self.preview_media_mode(plan, index, false).await
+    }
+
+    pub async fn preview_media_mode(
+        &self,
+        plan: RenamePlan,
+        index: usize,
+        compatible: bool,
+    ) -> Result<crate::media_player::Media> {
         use crate::media_player::{Location, Media};
         let path = if self.remote {
             plan.tasks
@@ -425,7 +434,11 @@ impl Connection {
         } else {
             tv_manager_core::rename::playback_path(&plan, index)?
         };
-        let mime = crate::media_player::mime(&path);
+        let mime = if compatible {
+            "video/mp4"
+        } else {
+            crate::media_player::mime(&path)
+        };
         let id = uuid::Uuid::new_v4().to_string();
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -437,6 +450,7 @@ impl Connection {
                         crate::mobile_storage::native_preview(&root, &path, mime).await?;
                     return Ok(Media {
                         location: Location::Native(source),
+                        _preview_cache: None,
                         size,
                         mime,
                         id,
@@ -447,6 +461,7 @@ impl Connection {
                 #[cfg(target_os = "ios")]
                 return Ok(Media {
                     location: Location::Document(root, path),
+                    _preview_cache: None,
                     size,
                     mime,
                     id,
@@ -454,9 +469,19 @@ impl Connection {
             }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
+                let converted = if compatible {
+                    Some(tv_manager_server::compatibility::convert(&path).await?)
+                } else {
+                    None
+                };
+                let (path, preview_cache) = match converted {
+                    Some(value) => (value.path, Some(value.directory)),
+                    None => (path, None),
+                };
                 let size = std::fs::metadata(&path)?.len();
                 return Ok(Media {
                     location: Location::File(path),
+                    _preview_cache: preview_cache,
                     size,
                     mime,
                     id,
@@ -465,17 +490,24 @@ impl Connection {
         }
         let (client, url) = self.client()?;
         let response = client
-            .post(url.join(&format!("/v1/plans/{}/tasks/{index}/play", plan.id))?)
-            .timeout(Duration::from_secs(15))
+            .post(url.join(&format!(
+                "/v1/plans/{}/tasks/{index}/play?compatible={compatible}",
+                plan.id
+            ))?)
+            .timeout(Duration::from_secs(75))
             .bearer_auth(&self.token)
             .send()
             .await
             .map_err(|_| anyhow::anyhow!("Could not connect to the media server"))?;
         if !response.status().is_success() {
-            bail!(
-                "Could not start playback (HTTP {}). Refresh the library preview and try again.",
-                response.status()
-            );
+            let status = response.status();
+            let detail = response
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v["error"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| "Refresh the library and try again.".into());
+            bail!("Could not start playback (HTTP {status}): {detail}");
         }
         let value: serde_json::Value =
             response.json().await.context("Invalid playback response")?;
@@ -498,6 +530,41 @@ impl Connection {
             .context("Missing media size")?
             .to_str()?
             .parse()?;
+        #[cfg(target_os = "ios")]
+        if compatible {
+            use tokio::io::AsyncWriteExt;
+            anyhow::ensure!(
+                size <= 64 * 1024 * 1024,
+                "Compatibility preview exceeds the download limit"
+            );
+            let directory = std::sync::Arc::new(tempfile::tempdir_in(
+                crate::mobile_storage::compatibility_cache().await?,
+            )?);
+            let path = directory.path().join("preview.mp4");
+            let mut output = tokio::fs::File::create(&path).await?;
+            let mut response = client
+                .get(&stream)
+                .timeout(Duration::from_secs(75))
+                .send()
+                .await?
+                .error_for_status()?;
+            let mut length = 0u64;
+            while let Some(bytes) = response.chunk().await? {
+                length += bytes.len() as u64;
+                anyhow::ensure!(length <= size, "Invalid compatibility preview size");
+                output.write_all(&bytes).await?;
+            }
+            anyhow::ensure!(length == size, "Incomplete compatibility preview");
+            output.flush().await?;
+            drop(output);
+            return Ok(Media {
+                location: Location::File(path),
+                size,
+                mime,
+                id,
+                _preview_cache: Some(directory),
+            });
+        }
         #[cfg(target_os = "android")]
         {
             let (source, size) =
@@ -505,6 +572,7 @@ impl Connection {
                     .await?;
             return Ok(Media {
                 location: Location::Native(source),
+                _preview_cache: None,
                 size,
                 mime,
                 id,
@@ -513,6 +581,7 @@ impl Connection {
         #[cfg(not(target_os = "android"))]
         Ok(Media {
             location: Location::Remote(client, stream),
+            _preview_cache: None,
             size,
             mime,
             id,

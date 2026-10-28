@@ -638,9 +638,9 @@ fn App() -> Element {
                 if active_panel()=="settings" {
                     section {class:"panel settings-panel","aria-label":"Settings",
                         div {class:"preview-heading",div {p {class:"eyebrow","PREFERENCES & HISTORY"} h2 {"Settings"}}}
-                        if cfg!(any(target_os = "android", target_os = "ios")) {ads::AdPreferences {}}
                         {updates_panel}
                         library_tools::RenameHistory {connection,form,plan,busy,message,consumed}
+                        if cfg!(any(target_os = "android", target_os = "ios")) {ads::AdPreferences {}}
                         p {class:"status",role:"status","{message}"}
                     }
                 }
