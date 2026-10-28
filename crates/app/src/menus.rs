@@ -33,7 +33,7 @@ pub fn SheetDialog(id: String, title: String, onclose: EventHandler, children: E
         ));
     });
     let heading = format!("{id}-title");
-    rsx! {dialog {id:id.clone(),class:"panel controls ordering-dialog menu-sheet","aria-labelledby":heading.clone(),
+    rsx! {dialog {id:id.clone(),class:"panel controls ordering-dialog menu-sheet sheet-surface","aria-labelledby":heading.clone(),
         div {class:"menu-sheet-chrome",
             div {class:"preview-sheet-grip","aria-label":"Drag down to close",span {"aria-hidden":"true"}}
             div {class:"menu-sheet-toolbar",

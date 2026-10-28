@@ -33,7 +33,8 @@ typealias BuildConfig = com.tvshowmanager.app.BuildConfig
 
 /** Native ad assets never enter the WebView; the SDK owns clicks and impressions. */
 class MainActivity : WryActivity() {
-    private val storage by lazy { LocalStorage(this) }
+    private val mediaPreviews by lazy { MediaPreviews(this) }
+    private val storage by lazy { LocalStorage(this,mediaPreviews) }
     private val fullscreen: FullscreenAds by lazy { FullscreenAds(this,
         { !dead && foreground && sdkReady && consent?.canRequestAds() == true },
         { state -> state.put("privacyRequired", consent?.privacyOptionsRequirementStatus == ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED); browser?.evaluateJavascript("window.mediaManagerFullscreenState?.(${state})", null) },
@@ -58,6 +59,7 @@ class MainActivity : WryActivity() {
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
         browser = webView
+        mediaPreviews.attach(webView)
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
         WebViewCompat.addWebMessageListener(webView, "MediaManagerStorage",
             setOf("https://dioxus.index.html")) { _, message, origin, mainFrame, _ ->
@@ -318,7 +320,7 @@ class MainActivity : WryActivity() {
         foreground = false; adView?.visibility = View.GONE; super.onPause()
     }
     override fun onDestroy() {
-        dead = true; fullscreen.close(); discardAd(); storage.close(); browser = null; super.onDestroy()
+        dead = true; fullscreen.close(); discardAd(); mediaPreviews.clear(); storage.close(); browser = null; super.onDestroy()
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).roundToInt()
 
@@ -330,7 +332,7 @@ class MainActivity : WryActivity() {
 }
 
 /** Storage Access Framework access, restricted to folders explicitly granted by the user. */
-private class LocalStorage(private val activity: MainActivity) {
+private class LocalStorage(private val activity: MainActivity, private val mediaPreviews: MediaPreviews) {
     private val resolver get() = activity.contentResolver
     private val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var pending: Pair<JSONObject, WebView>? = null
@@ -453,6 +455,8 @@ private class LocalStorage(private val activity: MainActivity) {
         return doc
     }
     private fun execute(command: JSONObject): JSONObject {
+        if(command.getString("op")=="prepareRemotePreview") return mediaPreviews.remote(command)
+        if(command.getString("op")=="stopMediaPreview") {mediaPreviews.clear();return JSONObject()}
         val tree=root(command)
         when(command.getString("op")) {
             "checkFolder" -> {
@@ -472,6 +476,11 @@ private class LocalStorage(private val activity: MainActivity) {
                 }
                 val doc=resolve(tree,"");walk(doc,"",0)
                 return JSONObject().put("entries",entries).put("name",doc.name).put("cache",activity.cacheDir.absolutePath).put("state",activity.filesDir.absolutePath)
+            }
+            "prepareMediaPreview" -> {
+                val doc=resolve(tree,command.getString("path"));require(!doc.dir)
+                val mime=command.getString("mime");require(mime.startsWith("video/"))
+                return mediaPreviews.local(doc.uri,doc.size,mime)
             }
             "readMedia" -> {
                 val doc=resolve(tree,command.getString("path"));require(!doc.dir)
@@ -707,4 +716,114 @@ private class FullscreenAds(
         } else { full!!.fullScreenContentCallback = callback; full.show(activity) }
     }
     private fun finish(message: String) { presenting = false; state(message); changed(); load() }
+}
+
+/** Streams media without copying video bytes through JavaScript or Rust's Android request bridge. */
+private class MediaPreviews(private val activity: MainActivity) {
+    private data class Source(val uri: android.net.Uri?, val url: String?, val tls: javax.net.ssl.SSLSocketFactory?, val size: Long, val mime: String)
+    private val sources = java.util.concurrent.ConcurrentHashMap<String, Source>()
+    private val streams = java.util.Collections.synchronizedSet(mutableSetOf<java.io.InputStream>())
+    private var supported = false
+    fun attach(web: WebView) {
+        if (android.os.Build.VERSION.SDK_INT < 26) return
+        val original = web.webViewClient
+        web.webViewClient = object : android.webkit.WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse? {
+                if (request.url.scheme == "https" && request.url.host == "dioxus.index.html" && request.url.path?.startsWith("/native-media-preview/") == true) return response(request)
+                return original.shouldInterceptRequest(view, request)
+            }
+            override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest) = original.shouldOverrideUrlLoading(view,request)
+            override fun onPageStarted(view: WebView, url: String, icon: android.graphics.Bitmap?) = original.onPageStarted(view,url,icon)
+            override fun onPageFinished(view: WebView, url: String) = original.onPageFinished(view,url)
+            override fun onPageCommitVisible(view: WebView, url: String) = original.onPageCommitVisible(view,url)
+            override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) = original.onReceivedError(view,request,error)
+            override fun onReceivedHttpError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceResponse) = original.onReceivedHttpError(view,request,error)
+            override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) = original.onReceivedSslError(view,handler,error)
+            override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail) = original.onRenderProcessGone(view,detail)
+            override fun doUpdateVisitedHistory(view: WebView, url: String, reload: Boolean) = original.doUpdateVisitedHistory(view,url,reload)
+        }
+        supported = true
+    }
+    fun clear() {
+        sources.clear()
+        synchronized(streams) { streams.toList().forEach { runCatching { it.close() } }; streams.clear() }
+    }
+    fun local(uri: android.net.Uri, size: Long, mime: String): JSONObject = register(Source(uri,null,null,size,mime))
+    fun remote(command: JSONObject): JSONObject {
+        val url = java.net.URI(command.getString("url"))
+        require(url.scheme == "https" || (url.scheme == "http" && url.host in listOf("localhost","127.0.0.1","[::1]","::1"))) { "Remote playback requires HTTPS" }
+        require(url.rawUserInfo == null && url.rawQuery == null && url.rawFragment == null && Regex("/v1/media/[0-9a-fA-F-]{36}").matches(url.path)) { "Invalid playback URL" }
+        val certificate = command.optString("certificate")
+        val tls = if (certificate.isEmpty()) null else {
+            val bytes = android.util.Base64.decode(certificate,android.util.Base64.DEFAULT)
+            require(bytes.size <= 16384)
+            val cert = java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(bytes.inputStream())
+            val store = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("desktop",cert) }
+            val trust = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
+            javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null,trust.trustManagers,null) }.socketFactory
+        }
+        return register(Source(null,url.toString(),tls,command.getLong("size"),command.getString("mime")))
+    }
+    private fun register(source: Source): JSONObject {
+        require(supported) { "Inline preview requires Android 8 or newer. Open the file with your device video app." }
+        require(source.size > 0) { "Empty media file" }
+        clear()
+        val token = java.util.UUID.randomUUID().toString(); sources[token] = source
+        return JSONObject().put("token",token).put("size",source.size)
+    }
+    private fun response(request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse {
+        fun empty(code: Int, reason: String, extra: Map<String,String> = emptyMap()) = android.webkit.WebResourceResponse("text/plain",null,code,reason,extra,java.io.ByteArrayInputStream(byteArrayOf()))
+        val token = request.url.path?.removePrefix("/native-media-preview/") ?: return empty(404,"Not Found")
+        val source = sources[token] ?: return empty(404,"Not Found")
+        if (request.method !in listOf("GET","HEAD")) return empty(405,"Method Not Allowed")
+        val raw = request.requestHeaders.entries.firstOrNull { it.key.equals("range",true) }?.value
+        val range = try { previewRange(raw,source.size) } catch (_: Exception) { return empty(416,"Range Not Satisfiable",mapOf("Content-Range" to "bytes */${source.size}")) }
+        val start=range.first; val count=range.second-start+1
+        val headers=mutableMapOf("Accept-Ranges" to "bytes","Content-Length" to count.toString(),"Cache-Control" to "no-store","Referrer-Policy" to "no-referrer")
+        if(raw!=null) headers["Content-Range"]="bytes $start-${range.second}/${source.size}"
+        if(request.method=="HEAD") return android.webkit.WebResourceResponse(source.mime,null,if(raw==null)200 else 206,if(raw==null)"OK" else "Partial Content",headers,java.io.ByteArrayInputStream(byteArrayOf()))
+        return try {
+            val input: java.io.InputStream
+            var connection: java.net.HttpURLConnection? = null
+            if(source.uri!=null) {
+                val descriptor=activity.contentResolver.openFileDescriptor(source.uri,"r") ?: error("Media unavailable")
+                val file=android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+                try { file.channel.position(start) } catch(error:Exception) {file.close();throw error}
+                input=file
+            } else {
+                connection=java.net.URL(source.url!!).openConnection() as java.net.HttpURLConnection
+                connection.instanceFollowRedirects=false; connection.connectTimeout=10000; connection.readTimeout=10000
+                if(connection is javax.net.ssl.HttpsURLConnection && source.tls!=null) connection.sslSocketFactory=source.tls
+                connection.setRequestProperty("Range","bytes=$start-${range.second}")
+                try {
+                    require(connection.responseCode==206 && connection.getHeaderField("Content-Range")=="bytes $start-${range.second}/${source.size}") { "Invalid server media range" }
+                    input=connection.inputStream
+                } catch(error:Exception) {connection.disconnect();throw error}
+            }
+            val remote=connection
+            val bounded=object : java.io.FilterInputStream(input) {
+                private var remaining=count
+                override fun read(): Int {if(remaining<=0)return -1;val n=super.read();if(n>=0)remaining--;return n}
+                override fun read(data:ByteArray,offset:Int,length:Int):Int {if(length==0)return 0;if(remaining<=0)return -1;val n=`in`.read(data,offset,minOf(length.toLong(),remaining).toInt());if(n>0)remaining-=n;return n}
+                override fun skip(count:Long):Long {val n=`in`.skip(minOf(count,remaining));remaining-=n;return n}
+                override fun close(){try{super.close()}finally{remote?.disconnect();streams.remove(this)}}
+            }
+            streams.add(bounded)
+            android.webkit.WebResourceResponse(source.mime,null,if(raw==null)200 else 206,if(raw==null)"OK" else "Partial Content",headers,bounded)
+        } catch(error:Exception) {
+            android.util.Log.w("MediaManagerPlayback","Could not open preview stream",error)
+            empty(503,"Media Unavailable")
+        }
+    }
+}
+
+/** Full requested HTTP byte ranges; response bodies stream without buffering the whole range. */
+internal fun previewRange(value:String?,size:Long):Pair<Long,Long> {
+    require(size>0)
+    if(value==null)return 0L to size-1
+    require(value.startsWith("bytes=") && !value.contains(','))
+    val parts=value.removePrefix("bytes=").split('-',limit=2);require(parts.size==2)
+    if(parts[0].isEmpty()){val count=parts[1].toLong().coerceAtMost(size);require(count>0);return size-count to size-1}
+    val start=parts[0].toLong();val end=if(parts[1].isEmpty())size-1 else parts[1].toLong().coerceAtMost(size-1)
+    require(start>=0 && start<size && end>=start);return start to end
 }

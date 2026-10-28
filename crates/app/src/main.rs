@@ -15,6 +15,8 @@ mod poster;
 mod preview;
 mod profiles;
 mod session;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod updates;
 mod workspace;
 
 use backend::Connection;
@@ -184,6 +186,8 @@ fn App() -> Element {
     let mut snapshot = use_signal(|| None::<(Form, Connection)>);
     let mut busy = use_signal(|| false);
     let mut refreshing = use_signal(|| false);
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let updater = updates::use_updater();
     let mut message = use_signal(String::new);
     let mut persistence_error = use_signal(String::new);
     let mut confirming = use_signal(|| false);
@@ -431,8 +435,18 @@ fn App() -> Element {
         } } };
     }
 
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let updates_panel = rsx! { updates::UpdatePanel {updater,blocked:busy() || refreshing() || downloading_posters() || confirming()} };
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let updates_panel = rsx! {};
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let update_notice =
+        rsx! { updates::UpdateNotice {updater,onopen:move |_|active_panel.set("settings")} };
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let update_notice = rsx! {};
     rsx! {
         style { "{CSS}" }
+        {update_notice}
         if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
         onboarding::ConnectionIsland {notice:connection_notice,active:active_panel,onlibrary:move |_|navigate.call("preview")}
         main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(matches!(active_panel(),"preview"|"inspector"|"posters") && if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
@@ -625,6 +639,7 @@ fn App() -> Element {
                     section {class:"panel settings-panel","aria-label":"Settings",
                         div {class:"preview-heading",div {p {class:"eyebrow","PREFERENCES & HISTORY"} h2 {"Settings"}}}
                         if cfg!(any(target_os = "android", target_os = "ios")) {ads::AdPreferences {}}
+                        {updates_panel}
                         library_tools::RenameHistory {connection,form,plan,busy,message,consumed}
                         p {class:"status",role:"status","{message}"}
                     }

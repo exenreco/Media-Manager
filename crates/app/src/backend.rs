@@ -431,7 +431,20 @@ impl Connection {
             #[cfg(any(target_os = "android", target_os = "ios"))]
             {
                 let (root, path) = crate::mobile_storage::media_document(&plan, index)?;
+                #[cfg(target_os = "android")]
+                {
+                    let (source, size) =
+                        crate::mobile_storage::native_preview(&root, &path, mime).await?;
+                    return Ok(Media {
+                        location: Location::Native(source),
+                        size,
+                        mime,
+                        id,
+                    });
+                }
+                #[cfg(target_os = "ios")]
                 let (size, _) = crate::mobile_storage::read_media(&root, &path, 0, 0).await?;
+                #[cfg(target_os = "ios")]
                 return Ok(Media {
                     location: Location::Document(root, path),
                     size,
@@ -453,6 +466,7 @@ impl Connection {
         let (client, url) = self.client()?;
         let response = client
             .post(url.join(&format!("/v1/plans/{}/tasks/{index}/play", plan.id))?)
+            .timeout(Duration::from_secs(15))
             .bearer_auth(&self.token)
             .send()
             .await
@@ -472,13 +486,31 @@ impl Connection {
             bail!("Invalid playback ticket");
         }
         let stream = url.join(&format!("/v1/media/{ticket}"))?.to_string();
-        let response = client.head(&stream).send().await?.error_for_status()?;
+        let response = client
+            .head(&stream)
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await?
+            .error_for_status()?;
         let size = response
             .headers()
             .get("content-length")
             .context("Missing media size")?
             .to_str()?
             .parse()?;
+        #[cfg(target_os = "android")]
+        {
+            let (source, size) =
+                crate::mobile_storage::remote_preview(&stream, &self.certificate, size, mime)
+                    .await?;
+            return Ok(Media {
+                location: Location::Native(source),
+                size,
+                mime,
+                id,
+            });
+        }
+        #[cfg(not(target_os = "android"))]
         Ok(Media {
             location: Location::Remote(client, stream),
             size,

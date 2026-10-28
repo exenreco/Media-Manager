@@ -5786,6 +5786,7 @@ name = "tv-manager-app"
 version = "1.0.0-beta.2"
 dependencies = [
  "anyhow",
+ "ashpd",
  "base64 0.22.1",
  "dioxus",
  "image",
@@ -5794,7 +5795,9 @@ dependencies = [
  "qrcode",
  "reqwest",
  "rfd 0.15.4",
+ "ring",
  "rqrr",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

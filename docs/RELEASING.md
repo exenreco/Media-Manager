@@ -101,3 +101,7 @@ This validation did not publish a release, configure publisher signing, test
 the missing-WebView2 path on a clean Windows installation, or establish macOS
 Gatekeeper acceptance. The final release workflow also refreshes the Windows
 installer checksum after optional publisher signing.
+
+## Signed desktop updater metadata
+
+See [Desktop updates](UPDATES.md). The release job remains disabled until `UPDATER_ENABLED=true` and encrypted Actions secret `UPDATER_SIGNING_KEY` are configured. The private key must match `crates/app/src/update-public-key.txt`. Never put the private key into Git, build artifacts or release notes. Successful complete desktop builds publish signed manifests alongside installers; ordinary OS publisher signing remains a separate requirement.

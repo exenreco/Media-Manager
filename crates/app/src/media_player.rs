@@ -13,8 +13,11 @@ const CHUNK: u64 = 1024 * 1024;
 pub enum Location {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     File(std::path::PathBuf),
+    #[cfg(not(target_os = "android"))]
     Remote(reqwest::Client, String),
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(target_os = "android")]
+    Native(String),
+    #[cfg(target_os = "ios")]
     Document(String, String),
 }
 
@@ -83,9 +86,22 @@ fn range(value: Option<&str>, size: u64) -> Result<(u64, u64)> {
 }
 
 impl Media {
+    pub fn source(&self) -> String {
+        #[cfg(target_os = "android")]
+        if let Location::Native(source) = &self.location {
+            return source.clone();
+        }
+        format!("/media-preview/{}", self.id)
+    }
+
     async fn bytes(&self, start: u64, end: u64) -> Result<Vec<u8>> {
+        #[cfg(not(target_os = "android"))]
         let count = (end - start + 1) as usize;
+        #[cfg(target_os = "android")]
+        let _ = (start, end);
         match &self.location {
+            #[cfg(target_os = "android")]
+            Location::Native(_) => bail!("Native media streams are handled by Android"),
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             Location::File(path) => {
                 use std::io::{Read, Seek};
@@ -99,6 +115,7 @@ impl Media {
                 })
                 .await?
             }
+            #[cfg(not(target_os = "android"))]
             Location::Remote(client, url) => {
                 let mut response = client
                     .get(url)
@@ -129,7 +146,7 @@ impl Media {
                 }
                 Ok(bytes)
             }
-            #[cfg(any(target_os = "android", target_os = "ios"))]
+            #[cfg(target_os = "ios")]
             Location::Document(root, path) => {
                 crate::mobile_storage::read_media(root, path, start, count)
                     .await
@@ -180,7 +197,20 @@ pub fn use_media_handler(media: Signal<Option<Media>>) {
         spawn(async move {
             let response = match current {
                 Some(value) if request.uri().path() == format!("/media-preview/{}", value.id) => {
-                    value.response(request).await
+                    // Android's WebView bridge aborts the process after ten seconds.
+                    // Return a recoverable response before that bridge deadline.
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(7),
+                        value.response(request),
+                    )
+                    .await
+                    {
+                        Ok(response) => response,
+                        Err(_) => Response::builder()
+                            .status(504)
+                            .body(vec![])
+                            .map_err(Into::into),
+                    }
                 }
                 _ => Response::builder()
                     .status(404)

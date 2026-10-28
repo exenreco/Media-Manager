@@ -44,3 +44,27 @@ main.mobile-app .mobile-dock{background:transparent;border-color:transparent;box
 @media(prefers-reduced-motion:reduce){.menu-sheet,main>.layout{transition:none!important;animation:none!important}}
 
 :root[data-ads-paused=true] .native-ad-container{display:none}
+
+/* Both popup types use the same shell, including dialog UA-style resets. */
+:is(main[data-sheet-mode=true] .sheet-surface,.sheet-surface[data-sheet=true]){
+ box-sizing:border-box;left:50%;right:auto;bottom:0;top:auto;margin:0;
+ width:min(720px,100%);max-width:none;min-width:0;min-height:0;
+ max-height:calc(var(--preview-viewport,100dvh) - max(env(safe-area-inset-top,0px),var(--native-safe-top,24px)) - 14px);
+ padding:0;border:1px solid #292929;border-bottom:0;border-radius:32px 32px 0 0;
+ background:#080808;color:#e9e9e9;box-shadow:0 -16px 80px #0008;
+}
+.menu-sheet[data-sheet=true]{transform:translate3d(-50%,105%,0)}
+.menu-sheet[data-sheet=true]:is([data-state=open],[data-state=dragging]){transform:translate3d(-50%,var(--sheet-drag,0px),0)}
+.menu-sheet[data-sheet=true][data-state=closing]{transform:translate3d(-50%,105%,0)}
+.menu-sheet[data-sheet=true] .menu-sheet-chrome{position:relative;background:#080808;z-index:1}
+.menu-sheet[data-sheet=true] .menu-sheet-toolbar{align-items:center;touch-action:none}
+.menu-sheet[data-sheet=true] .menu-sheet-toolbar svg{width:18px;height:18px}
+.menu-sheet[data-sheet=true] .menu-sheet-content>h2{font-size:20px;line-height:1.3;margin:0 0 24px}
+.menu-sheet[data-sheet=true]::backdrop{background:#0000;transition:background .38s ease}
+.menu-sheet[data-sheet=true]:is([data-state=open],[data-state=dragging])::backdrop{background:rgb(0 0 0 / .62)}
+main[data-menu-sheet]>.layout{transform:none;border-radius:0;overflow:visible}
+main .layout>:is(.welcome-panel,.left-panel,.center-column,.artwork-panel,.health-panel,.settings-panel){transform-origin:50% 0;transition:transform .58s cubic-bezier(.18,.95,.25,1.08),border-radius .58s,filter .38s}
+main[data-menu-sheet] .layout>:is(.welcome-panel,.left-panel,.center-column,.artwork-panel,.health-panel,.settings-panel){transform:translate3d(0,-5px,0) scale(.955);border-radius:24px;filter:brightness(.72);overflow:hidden}
+main[data-menu-sheet-state=closing] .layout>:is(.welcome-panel,.left-panel,.center-column,.artwork-panel,.health-panel,.settings-panel){transform:none;border-radius:0;filter:none}
+.sheet-surface button{-webkit-tap-highlight-color:transparent}
+@media(prefers-reduced-motion:reduce){.menu-sheet::backdrop,main .layout>:is(.welcome-panel,.left-panel,.center-column,.artwork-panel,.health-panel,.settings-panel){transition:none!important}}
