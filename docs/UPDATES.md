@@ -1,0 +1,19 @@
+# Desktop updates
+
+Media Manager checks public GitHub Releases for newer versions on startup (after a short delay) and every 12 hours when automatic checks are enabled. Settings → App updates provides a manual check, Stable or Beta and stable channels, download progress, and an Open installer action. Preferences are saved separately from the library session, so resuming a workspace is not required. Beta builds initially follow the beta channel; stable builds initially follow stable.
+
+The updater is desktop-only. It selects Windows x64 EXE, macOS Intel/Apple Silicon PKG, Debian-compatible Linux DEB, or a Flatpak bundle for Flatpak/other Linux installations. Linux opens the downloaded file through the desktop portal so the system software manager handles installation. Windows and macOS open their normal installers. Installation may ask for system approval. Complete the installer and restart the app; the updater does not silently replace a running executable, forcibly close the app or claim installation succeeded just because an installer opened. Keep media work idle while installing. Existing settings and libraries are outside the installed app files.
+
+## Trust and publishing
+
+The app pins the raw Ed25519 public key in `crates/app/src/update-public-key.txt`. A newer release is eligible only when it includes both `update-manifest.json` and `update-manifest.sig`. The signature covers the exact manifest bytes. The manifest binds version, platform, architecture, package type, HTTPS release URL, size and SHA-256 digest. Downloads are capped at 1 GiB, streamed to a temporary file and checked before being kept. The file is checked again immediately before installer handoff. Signature, download or metadata failures leave the installed app unchanged. Drafts and downgrades are ignored; stable excludes prereleases. Missing metadata on an in-progress release reports that the check should be retried after builds finish.
+
+Release Actions runs `scripts/sign_update_manifest.py` after desktop assets are attached. The job requires repository variable `UPDATER_ENABLED=true` and encrypted Actions secret `UPDATER_SIGNING_KEY` containing a PEM PKCS8 Ed25519 key. It refuses missing platform installers or a key that does not match the bundled public key. GitHub's asset digests become the signed package hashes. Four additional assets are attached: manifest, signature, and their SHA-256 files. Desktop-only and partial desktop rebuilds regenerate metadata against the complete release asset set.
+
+The local private key is kept under ignored `.tools/update-signing/private-key.pem`. Back it up securely; do not commit it or put it into release assets. Activation requires explicitly authorizing its encrypted upload to GitHub Actions. Signing is disabled until that configuration is completed. Review repository workflow write access because an authorized workflow with this secret can sign updates. Do not overwrite version tags for new application changes. Key rotation needs an update signed with the old key that installs the new public key before switching signing keys.
+
+These updater signatures are independent of Windows Authenticode, Apple Developer ID/notarization and package-manager repository signatures. They do not remove OS publisher warnings. The first updater-enabled app must be installed normally; older versions cannot discover this feature themselves. GitHub Releases is the update transport, so no application account or API token is stored in the app. GitHub API limits or outages may temporarily prevent checks.
+
+## Scope
+
+This implementation uses verified package downloads and explicit native installer handoff. It does not set up an APT repository, publish a Flatpak remote, integrate Sparkle, offer silent installs or automatically restart all platforms. Existing OS package-management interfaces handle installation. No production update has been installed during testing.

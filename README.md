@@ -165,3 +165,7 @@ includes an explicit patent grant and allows forks and redistribution; it does
 not reserve advertising revenue or exclusive distribution rights to this project.
 Copyright © 2026 Exenreco Bell. Dependencies, Google SDKs and provider artwork
 retain their own terms; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Desktop app updates
+
+Desktop builds include Settings → App updates for signed GitHub Release checks, stable/beta channels and verified installer downloads. Updates open the platform installer after media work finishes. See [Desktop updates](docs/UPDATES.md) for signing setup, supported package types and limits. Signed-update publishing must be enabled before future releases can be offered in-app.
