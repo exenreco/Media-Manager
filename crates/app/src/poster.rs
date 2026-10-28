@@ -15,6 +15,7 @@ pub fn PosterInspector(
     plan: Signal<Option<tv_manager_core::rename::RenamePlan>>,
     connection: Signal<crate::backend::Connection>,
     mut busy: Signal<bool>,
+    onclose: EventHandler,
 ) -> Element {
     let mut replace = use_signal(|| false);
     let mut status = use_signal(String::new);
@@ -37,7 +38,7 @@ pub fn PosterInspector(
     let can_save =
         download.starts_with("https://") && (chosen.slot.local_path.is_none() || replace());
     rsx! {section {class:"poster-inspector",
-        div {class:"inspector-heading",h2 {"Poster preview"}button {class:"quiet-icon",title:"Clear poster selection","aria-label":"Clear poster selection",onclick:move |_|selection.set(None),crate::workspace::Icon {name:"close"}}}
+        div {class:"inspector-heading",h2 {"Poster preview"}button {class:"quiet-icon",title:"Clear poster selection","aria-label":"Clear poster selection",onclick:move |_|onclose.call(()),crate::workspace::Icon {name:"close"}}}
         h3 {"{chosen.slot.title}"}
         label {"Preview alternate artwork for" select {value:chosen.slot.id.clone(),onchange:move |e|{
             let item=inventory.peek().iter().find(|p|p.id==e.value()).cloned();

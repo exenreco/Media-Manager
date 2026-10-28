@@ -156,3 +156,14 @@ test('matched show confirmation keeps advertisements behind the notice', () => {
   h.tick();
   assert.equal(h.messages.at(-1).eligible, false);
 });
+
+test('preview sheets keep native advertisements hidden until fully dismissed', () => {
+  const h = harness();
+  h.document.querySelector = selector => selector === 'main[data-preview-sheet]' ? {} : null;
+  h.tick();
+  assert.equal(h.messages.at(-1).eligible, false);
+  assert.equal(h.messages.at(-1).visible, false);
+  h.document.querySelector = () => null;
+  h.tick();
+  assert.equal(h.messages.at(-1).visible, true);
+});

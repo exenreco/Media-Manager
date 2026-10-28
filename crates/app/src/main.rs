@@ -30,7 +30,9 @@ const CSS: &str = concat!(
     "\n",
     include_str!("welcome.css"),
     "\n",
-    include_str!("mobile-typography.css")
+    include_str!("mobile-typography.css"),
+    "\n",
+    include_str!("preview-sheet.css")
 );
 
 #[derive(Clone, Copy)]
@@ -430,7 +432,7 @@ fn App() -> Element {
         style { "{CSS}" }
         if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
         onboarding::ConnectionIsland {notice:connection_notice,active:active_panel,onlibrary:move |_|navigate.call("preview")}
-        main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
+        main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(matches!(active_panel(),"preview"|"inspector"|"posters") && if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
             onpointermove: move |e| {
                 if let Some(start) = drag() {
                     let delta = e.client_coordinates().x - start.x;
@@ -749,11 +751,11 @@ fn App() -> Element {
                         _ => (),
                     }
                 }
-                section { class: "panel controls right-panel", id: "media-inspector-sidebar", "aria-label": "File preview and title editing",
+                workspace::PreviewPanel {onclose:move |_|{selected.set(None);selected_artwork.set(None);if active_panel()=="inspector"{active_panel.set("preview");}},
                     if active_panel()=="posters" {
-                        poster::PosterInspector {selection:selected_artwork,inventory:artwork_inventory,plan,connection,busy}
+                        poster::PosterInspector {selection:selected_artwork,inventory:artwork_inventory,plan,connection,busy,onclose:move |_|workspace::close_preview()}
                     } else {
-                        workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:changed || consumed() || confirming(),busy,message}
+                        workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:changed || consumed() || confirming(),busy,message,onclose:move |_|workspace::close_preview()}
                     }
                 }
                 section { class: "panel controls artwork-panel", id: "poster-naming-settings", "aria-label": "Artwork settings and preview",

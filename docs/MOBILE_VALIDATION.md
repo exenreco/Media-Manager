@@ -238,3 +238,20 @@ iOS interaction checks and physical-device acceptance remain pending. Its native
 build and simulator launch passed on the macOS runner; iOS cannot run locally on
 this Windows PC. The Android emulator reported an advertising privacy-check
 failure, so this validation does not establish successful ad delivery.
+
+
+## Compact preview sheets (working source after 1.0.0 beta)
+
+Media and artwork share a rounded black bottom sheet on native mobile apps and
+compact desktop windows. Browser fixtures exercising the actual stylesheet and
+controller passed phone (390x844), compact desktop (960x700), large desktop
+(1200x800), and native-mobile tablet layout checks. Short drag snap-back, downward
+dismissal, Escape, focus restoration, background inertness, artwork comparison,
+selection preservation across resizing, and reduced-motion transitions were
+checked. Native ad bridge tests include hiding advertisements through dismissal.
+
+An isolated Windows build with a disposable sample library confirmed the compact
+sheet, inline video, title field, and return to Library. No real media was changed.
+App checks passed 23 tests (two manual tests ignored), strict Clippy and formatting;
+19 JavaScript bridge tests passed. Android/iOS binaries have not been rebuilt or
+physically tested for this sheet change. The published 1.0.0 beta is unchanged.
