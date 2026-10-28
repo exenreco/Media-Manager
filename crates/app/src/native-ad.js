@@ -12,7 +12,7 @@
   window.mediaManagerAdSetHidden = hidden => slots().forEach(slot => { slot.hidden = hidden; });
   const geometry = slot => {
     const r = slot.getBoundingClientRect();
-    let eligible = !document.hidden && !slot.hidden && !document.querySelector('.overlay') && !document.querySelector('.ordering-dialog[open]') && !document.querySelector('.mobile-dock.expanded') && !document.querySelector('.connection-island[data-state=warning]') && !document.querySelector('.connection-island[data-state=match]') &&
+    let eligible = !document.hidden && !slot.hidden && !document.querySelector('.overlay') && !document.querySelector('main[data-preview-sheet]') && !document.querySelector('.ordering-dialog[open]') && !document.querySelector('.mobile-dock.expanded') && !document.querySelector('.connection-island[data-state=warning]') && !document.querySelector('.connection-island[data-state=match]') &&
       r.width >= 240 && r.height >= 379 && r.bottom > 0 && r.top < innerHeight;
     let visible = eligible && r.top >= -1 && r.left >= -1 && r.bottom <= innerHeight + 1 && r.right <= innerWidth + 1;
     const dock = document.querySelector('.mobile-dock');

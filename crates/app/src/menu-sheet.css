@@ -1,0 +1,44 @@
+.stop-sharing{margin-top:16px!important}
+.mobile-dock button{-webkit-appearance:none;appearance:none;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+.provider-picker>label{margin-bottom:9px}
+.mobile-provider-trigger{display:none}
+.provider-options{display:grid;gap:10px}
+.controls .provider-option{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 16px;text-align:left;background:#161616;border:1px solid #333;color:#ddd;border-radius:12px;white-space:normal}
+.controls .provider-option.selected{border-color:#8bac9a;background:#1b251f;color:#e6f2eb}
+.provider-option svg{flex-shrink:0}
+.menu-sheet .menu-sheet-content>h2{margin:0 42px 24px 0;font-size:22px}
+.menu-sheet-chrome .preview-sheet-grip,.menu-sheet-back{display:none}
+.controls .menu-sheet-close{position:absolute;right:16px;top:16px;width:32px;height:32px;padding:0;display:grid;place-items:center;border-radius:50%;background:#232323;color:#eee}
+.menu-sheet-footer{margin-top:22px}
+.menu-sheet-content .ordering-group{margin-bottom:0}
+.menu-sheet[data-sheet=true]{inset:auto 0 0;margin:0 auto;width:min(720px,100%);max-height:calc(var(--preview-viewport,100dvh) - max(env(safe-area-inset-top,0px),var(--native-safe-top,24px)) - 14px);padding:0;border:1px solid #292929;border-bottom:0;border-radius:32px 32px 0 0;background:#080808;box-shadow:0 -16px 80px #0008;overflow:hidden;transform:translateY(105%);transition:transform .58s cubic-bezier(.18,.95,.25,1.08);animation:none!important}
+.menu-sheet[data-sheet=true][open]{display:flex;flex-direction:column}
+.menu-sheet[data-sheet=true][data-state=open],.menu-sheet[data-sheet=true][data-state=dragging]{transform:translateY(var(--sheet-drag,0px))}
+.menu-sheet[data-sheet=true][data-state=dragging]{transition:none}
+.menu-sheet[data-sheet=true][data-state=closing]{transform:translateY(105%);transition:transform .28s cubic-bezier(.4,0,1,1)}
+.menu-sheet[data-sheet=true] .menu-sheet-chrome{flex-shrink:0;touch-action:none}
+.menu-sheet[data-sheet=true] .preview-sheet-grip{display:grid}
+.menu-sheet[data-sheet=true] .menu-sheet-toolbar{display:flex;justify-content:space-between;padding:0 18px 12px}
+.menu-sheet[data-sheet=true] .menu-sheet-toolbar button{position:static;display:grid;place-items:center;width:36px;height:36px;flex:0 0 36px;padding:0;border:0;border-radius:50%;background:#1c1c1c;color:#eee}
+.menu-sheet[data-sheet=true] .menu-sheet-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px clamp(20px,4vw,36px) 8px}
+.menu-sheet[data-sheet=true] .menu-sheet-content>h2{margin:0 0 24px}
+.menu-sheet[data-sheet=true] .menu-sheet-footer{flex-shrink:0;margin:0;padding:16px clamp(20px,4vw,36px) max(24px,env(safe-area-inset-bottom,0px));background:#080808}
+.menu-sheet[data-sheet=true] .menu-sheet-footer button{min-height:46px;border-radius:26px;font-size:14px}
+.menu-sheet[data-sheet=true] :is(label,.hint,.status){font-size:14px;line-height:1.6}
+.menu-sheet[data-sheet=true] :is(input,select,textarea){font-size:16px}
+.menu-sheet[data-sheet=true]::backdrop{background:#0009;backdrop-filter:none}
+main>.layout{transition:transform .58s cubic-bezier(.18,.95,.25,1.08),border-radius .58s;transform-origin:50% 0}
+main[data-menu-sheet]>.layout{transform:translateY(-5px) scale(.955);border-radius:24px;overflow:hidden}
+main.mobile-app .desktop-provider-select{display:none}
+main.mobile-app .mobile-provider-trigger{display:flex}
+.controls .mobile-provider-trigger{align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;background:#171717;border:1px solid #343434;border-radius:6px;padding:12px;color:#e8e8e8;font-size:16px;font-weight:400}
+main.mobile-app .mobile-dock,main.mobile-app .mobile-dock *{-webkit-tap-highlight-color:transparent}
+main.mobile-app :is(.mobile-dock,.dock-bar,.dock-grid){background:transparent;border-color:transparent;box-shadow:none;backdrop-filter:none}
+@media(max-width:760px){
+ .desktop-provider-select{display:none}.mobile-provider-trigger{display:flex}
+ .mobile-dock,.mobile-dock *{-webkit-tap-highlight-color:transparent}
+ .mobile-dock,.dock-bar,.dock-grid,.expanded .dock-grid{background:transparent;border-color:transparent;box-shadow:none;backdrop-filter:none}
+ .mobile-dock button:focus:not(:focus-visible){outline:none;box-shadow:none}
+ .mobile-dock button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+}
+@media(prefers-reduced-motion:reduce){.menu-sheet,main>.layout{transition:none!important;animation:none!important}}

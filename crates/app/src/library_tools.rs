@@ -193,7 +193,7 @@ fn DesktopPairing(
             });
         }, "Generate pairing QR" }
         if !qr().is_empty() { img { class: "pairing-qr", src: qr(), alt: "Single-use desktop pairing QR code" } p { class: "hint", "Expires in {remaining} seconds. One phone per QR." } }
-        if host().is_some() { button { r#type: "button", class: "secondary", disabled: busy(), onclick: move |_| { host.set(None); qr.set(String::new()); expires.set(None); message.set("Local sharing stopped. Paired phones can no longer access this host.".into()); }, "Stop local sharing" } }
+        if host().is_some() { button { r#type: "button", class: "secondary stop-sharing", disabled: busy(), onclick: move |_| { host.set(None); qr.set(String::new()); expires.set(None); message.set("Local sharing stopped. Paired phones can no longer access this host.".into()); }, "Stop local sharing" } }
     }}
 }
 
@@ -498,14 +498,9 @@ pub fn OrderingPopup(
     onclose: EventHandler<()>,
 ) -> Element {
     let form_value = form();
-    use_effect(move || {
-        let _ = document::eval("document.getElementById('ordering-dialog')?.showModal();");
-    });
-    rsx! {dialog {id:"ordering-dialog",class:"panel controls ordering-dialog","aria-labelledby":"ordering-dialog-title",oncancel:move |_|onclose.call(()),
-        button {class:"ordering-close",r#type:"button",autofocus:true,title:"Close ordering settings","aria-label":"Close ordering settings",onclick:move |_|onclose.call(()),crate::workspace::Icon {name:"close"}}
+    rsx! {crate::menus::SheetDialog {id:"ordering-dialog",title:"Ordering",onclose,
         fieldset {disabled,
                         section { class: "settings-group ordering-group",
-                            h2 { id:"ordering-dialog-title","Ordering" }
                             label { "Naming format"
                                 select { value: if form_value.jellyfin { "jellyfin" } else if form_value.plex { "plex" } else { "none" },
                                     onchange: move |e| {
@@ -525,6 +520,5 @@ pub fn OrderingPopup(
 
         }
         p {class:"hint",role:"status","{message}"}
-        button {class:"primary",r#type:"button",onclick:move |_|onclose.call(()),"Done"}
     }}
 }
