@@ -26,10 +26,13 @@ fn NativeAdBridge() -> Element {
         std::rc::Rc::new(plugin)
     });
     use_effect(|| {
+        let _ = document::eval(include_str!("fullscreen-ad.js"));
         let _ = document::eval(include_str!("native-ad.js"));
     });
     use_drop(|| {
-        let _ = document::eval("window.mediaManagerAdCleanup?.()");
+        let _ = document::eval(
+            "window.mediaManagerAdCleanup?.();window.mediaManagerFullscreenCleanup?.()",
+        );
     });
     #[cfg(target_os = "ios")]
     use_drop(move || {
@@ -45,11 +48,31 @@ pub fn NativeAdSlot(#[props(default = false)] posters: bool) -> Element {
     let suffix = if posters { "posters" } else { "library" };
     rsx! {
         if !posters { NativeAdBridge {} }
-        div { style: "margin-bottom:24px",
+        div { class:"native-ad-container", style: "margin-bottom:24px",
             div { id: "native-ad-slot-{suffix}", class: "native-ad-slot", style: "height:440px;min-width:240px;position:relative", "aria-label": "Advertisement" }
             p { class: "hint native-ad-status", role: "status", "Advertisement loads when this section is visible." }
             button { r#type: "button", class: "secondary ad-retry", hidden: true, "Retry ad" }
             button { r#type: "button", class: "secondary ad-privacy", hidden: true, "Ad privacy options" }
         }
+    }
+}
+
+/// Only native mobile builds offer rewards; entitlement is granted by SDK callbacks.
+#[component]
+pub fn AdPreferences() -> Element {
+    rsx! {
+        section {class:"settings-group",
+            h2 {"Advertising"}
+            p {class:"hint","Watch an optional rewarded ad to hide all ads on this device for 30 minutes. Closing before earning the reward does not activate the benefit."}
+            button {r#type:"button",class:"secondary ad-rewarded","Watch an ad — 30 minutes without ads"}
+            p {class:"hint fullscreen-ad-status",role:"status","Checking ad availability…"}
+            button {r#type:"button",class:"secondary ad-privacy",hidden:true,"Ad privacy options"}
+        }
+    }
+}
+
+pub fn rename_completed() {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        let _ = document::eval("window.mediaManagerRenameAd?.()");
     }
 }

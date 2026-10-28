@@ -5,6 +5,7 @@ mod backend;
 mod branding;
 mod library_tools;
 mod media_player;
+mod menus;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 mod mobile_storage;
 mod notifications;
@@ -30,7 +31,11 @@ const CSS: &str = concat!(
     "\n",
     include_str!("welcome.css"),
     "\n",
-    include_str!("mobile-typography.css")
+    include_str!("mobile-typography.css"),
+    "\n",
+    include_str!("preview-sheet.css"),
+    "\n",
+    include_str!("menu-sheet.css")
 );
 
 #[derive(Clone, Copy)]
@@ -430,7 +435,7 @@ fn App() -> Element {
         style { "{CSS}" }
         if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
         onboarding::ConnectionIsland {notice:connection_notice,active:active_panel,onlibrary:move |_|navigate.call("preview")}
-        main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
+        main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(matches!(active_panel(),"preview"|"inspector"|"posters") && if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
             onpointermove: move |e| {
                 if let Some(start) = drag() {
                     let delta = e.client_coordinates().x - start.x;
@@ -453,16 +458,7 @@ fn App() -> Element {
                         section { class: "settings-group api-group",
                             h2 { "API settings" }
                             if !form_value.movie {
-                            label { "Episode source"
-                                select { value: "{form_value.source}", onchange: move |e| { let mut f=form.write(); f.source=e.value(); f.options.selected_id.clear(); f.options.poster_override=None; f.options.season_overrides.clear(); },
-                                    option { value: "tvmaze", "TVMaze" }
-                                    option { value: "omdb", "OMDb" }
-                                    option { value: "custom", "Custom TVMaze-compatible API" }
-                                    option { value: "manual", "Manual titles" }
-                                    option { value: "batch", "Batch sequence" }
-                                    option { value: "web", "Episode guide URL" }
-                                }
-                            }
+                            menus::ProviderPicker {form}
                             div { class: "provider-settings",
                             h3 { "Provider configuration" }
                             if form_value.source == "tvmaze" { p { class: "hint", "TVMaze is ready to use. No API key required." } }
@@ -478,9 +474,7 @@ fn App() -> Element {
                             }
                         }
                             else {
-                                label {"Movie source" select {value:if matches!(form_value.source.as_str(),"tmdb"|"omdb"|"custom") {form_value.source.as_str()}else{"manual"},onchange:move|e|{let mut f=form.write();f.source=e.value();f.options.selected_id.clear();f.options.poster_override=None;f.options.season_overrides.clear();},
-                                    option {value:"manual","Entered title and year"} option {value:"tmdb","TMDB"} option {value:"omdb","OMDb"} option {value:"custom","Custom movie API (TMDB-compatible)"}
-                                }}
+                                menus::ProviderPicker {form}
                                 if form_value.source=="omdb" {label {"OMDb API key" input {r#type:"password",value:"{form_value.key}",oninput:move|e|form.write().key=e.value()}}}
                                 if form_value.source=="custom" {
                                     label {"Movie API base URL" input {r#type:"url",value:"{form_value.custom}",placeholder:"https://provider.example/api",oninput:move|e|{let mut f=form.write();f.custom=e.value();f.options.selected_id.clear();f.options.poster_override=None;}}}
@@ -630,6 +624,7 @@ fn App() -> Element {
                 if active_panel()=="settings" {
                     section {class:"panel settings-panel","aria-label":"Settings",
                         div {class:"preview-heading",div {p {class:"eyebrow","PREFERENCES & HISTORY"} h2 {"Settings"}}}
+                        if cfg!(any(target_os = "android", target_os = "ios")) {ads::AdPreferences {}}
                         library_tools::RenameHistory {connection,form,plan,busy,message,consumed}
                         p {class:"status",role:"status","{message}"}
                     }
@@ -749,11 +744,11 @@ fn App() -> Element {
                         _ => (),
                     }
                 }
-                section { class: "panel controls right-panel", id: "media-inspector-sidebar", "aria-label": "File preview and title editing",
+                workspace::PreviewPanel {onclose:move |_|{selected.set(None);selected_artwork.set(None);if active_panel()=="inspector"{active_panel.set("preview");}},
                     if active_panel()=="posters" {
-                        poster::PosterInspector {selection:selected_artwork,inventory:artwork_inventory,plan,connection,busy}
+                        poster::PosterInspector {selection:selected_artwork,inventory:artwork_inventory,plan,connection,busy,onclose:move |_|workspace::close_preview()}
                     } else {
-                        workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:changed || consumed() || confirming(),busy,message}
+                        workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:changed || consumed() || confirming(),busy,message,onclose:move |_|workspace::close_preview()}
                     }
                 }
                 section { class: "panel controls artwork-panel", id: "poster-naming-settings", "aria-label": "Artwork settings and preview",
@@ -871,6 +866,7 @@ fn App() -> Element {
                                             notifications::completed(format!("{success} renamed; {failures} rename failures. {downloaded} posters saved; {poster_failures} poster failures."));
                                             message.set(format!("Finished: {success} renamed, {failures} rename failures; {downloaded} posters downloaded, {poster_failures} poster failures. Review results below."));
                                             plan.set(Some(p));
+                                            if success > 0 && failures == 0 && poster_failures == 0 { ads::rename_completed(); }
                                         }
                                         Err(e) => message.set(format!("{e:#}. Update the details in Workspace to refresh before retrying.")),
                                     }
