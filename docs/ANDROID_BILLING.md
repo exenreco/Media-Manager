@@ -100,3 +100,42 @@ in [40824573993](https://github.com/exenreco/Media-Manager/actions/runs/40824573
 The public key and Play product were not configured, so no real purchase,
 pending-payment, acknowledgement, restore or refund transaction was exercised.
 Those require the internal-track acceptance checks above. No release was published.
+
+## Play billing configuration (October 29, 2026)
+
+The `remove_ads` product is active with the `standard` Buy purchase option at
+USD 5.99 and Google-generated regional prices. Multi-quantity purchases are off.
+The app's RSA-2048 licensing public key is configured as the repository variable
+`PLAY_BILLING_PUBLIC_KEY`; `AD_FREE_PRODUCT_ID` is `remove_ads`. The existing
+Media Manager Internal Testers list is enabled for license testing with
+`RESPOND_NORMALLY`.
+
+The dedicated Play bundle workflow now uses version code **1000007** while
+retaining version name **1.0.0**. It requires a valid configured public key,
+checks the generated release BuildConfig contains it, runs billing bridge and
+native receipt-signature tests, and exports an unsigned APK, AAB and native
+symbols for local upload-key signing. Existing published 1000006 packages do
+not gain billing configuration automatically.
+
+Real Play purchase, acknowledgement, reinstall/restore, pending-payment and
+refund checks must be recorded separately from automated tests. They require a
+Play Store installation and a signed-in license tester. Use the test payment
+method shown by Google Play; do not mistake an ordinary USD 5.99 checkout for a
+test purchase.
+
+Build 1000007 passed [Play bundle build 40921532894](https://github.com/exenreco/Media-Manager/actions/runs/40921532894)
+and [Android validation 40921981643](https://github.com/exenreco/Media-Manager/actions/runs/40921981643).
+The latter includes native receipt tests, emulator launch, and inline H.264
+8-bit/10-bit playback fixtures. Locally signed APK/AAB packages were inspected
+and both contain the configured public key and `remove_ads`; the AAB manifest
+reports versionCode 1000007, versionName 1.0.0 and the BILLING permission.
+
+A separate `Media_Manager_Play_Billing` API 35 emulator with Google's Play Store
+image is available for manual license-tester sign-in. No successful Play payment,
+acknowledgement or purchase restoration has been recorded yet.
+
+The signed 1000007 bundle is published to the existing Play internal testing
+track (release 2) and Console reports **Available to internal testers**. This
+is an internal test rollout, not a production release. A validated x86_64
+debug APK containing the public key is installed in the local Play Store
+emulator; Google Play sign-in and real test transactions are still pending.
