@@ -313,8 +313,12 @@ pub fn Inspector(
         if let Some(task)=task {
             div {class:"video-stage",
                 if let Some(value)=media.read().as_ref() {
+                    if cfg!(target_os="android") {
+                        media_player::AndroidInlinePreview {source:value.source()}
+                    } else {
                     video {key:"{value.id}",src:value.source(),controls:true,autoplay:true,muted:true,playsinline:true,preload:"metadata",onwaiting:move |_|buffering.set(true),onstalled:move |_|buffering.set(true),onplaying:move |_|buffering.set(false),oncanplay:move |_|buffering.set(false),
                         onerror:move|_|{buffering.set(false);error.set("The inline player could not decode or load this file.".into());}}
+                    }
                 } else {div {class:"video-placeholder",Icon {name:"play"} span {if loading(){"Preparing preview…"}else{"No video preview"}}}}
             }
             if buffering() && error().is_empty() {p {class:"hint",role:"status","Buffering video…"}}

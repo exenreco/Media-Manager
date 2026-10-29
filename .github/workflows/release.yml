@@ -25,6 +25,8 @@ concurrency:
 
 env:
   CARGO_INCREMENTAL: '0'
+  MEDIA_MANAGER_PLAY_PUBLIC_KEY: ${{ vars.PLAY_BILLING_PUBLIC_KEY }}
+  MEDIA_MANAGER_AD_FREE_PRODUCT: ${{ vars.AD_FREE_PRODUCT_ID }}
   RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
@@ -44,7 +46,7 @@ jobs:
           version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
           assert os.environ['RELEASE_TAG'] == 'v' + version, 'Tag must match Cargo.toml'
           PY
-      - name: Create preview release
+      - name: Create staging release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -306,6 +308,12 @@ jobs:
     needs: prepare
     if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android'
     runs-on: ubuntu-24.04
+    env:
+      MEDIA_MANAGER_PLAY_BUNDLE: 'true'
+      MEDIA_MANAGER_VERSION_CODE: '1000006'
+      CARGO_PROFILE_RELEASE_DEBUG: '1'
+      CARGO_PROFILE_RELEASE_STRIP: 'none'
+      RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
     permissions:
       contents: write
     steps:
@@ -344,20 +352,34 @@ jobs:
           echo "GRADLE_USER_HOME=$gradle_home" >> "$GITHUB_ENV"
           echo "MEDIA_MANAGER_ANDROID_ICONS=$GITHUB_WORKSPACE/assets/branding/icons/android" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
-      - name: Build installable Android preview with test ads
+      - name: Build Android release with production ads
         working-directory: crates/app
-        run: dx build --platform android --target aarch64-linux-android --no-default-features --features mobile
-      - name: Collect APK
+        run: dx build --release --platform android --target aarch64-linux-android --no-default-features --features mobile
+      - name: Build Play bundle and collect unsigned Android packages
         run: |
-          mkdir -p dist
-          apk=$(find target/dx -path '*/outputs/apk/debug/*.apk' -type f | head -n 1)
-          test -n "$apk"
-          cp "$apk" "dist/Media-Manager-${RELEASE_TAG#v}-android-aarch64-preview.apk"
+          project=$(find target/dx -path '*/gradle/wrapper/gradle-wrapper.properties' -print -quit)
+          test -n "$project"
+          project="${project%/gradle/wrapper/gradle-wrapper.properties}"
+          (cd "$project" && bash ./gradlew --no-daemon :app:bundleRelease)
+          mkdir -p dist target/android-signing-tools
+          apk=$(find target/dx -path '*/outputs/apk/release/*.apk' -type f | head -n 1)
+          bundle=$(find target/dx -path '*/outputs/bundle/release/*.aab' -type f | head -n 1)
+          test -n "$apk" && test -n "$bundle"
+          cp "$apk" "dist/Media-Manager-${RELEASE_TAG#v}-android-arm64-unsigned.apk"
+          cp "$bundle" "dist/Media-Manager-${RELEASE_TAG#v}-android-arm64-unsigned.aab"
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" target/android-signing-tools/
+          python scripts/export_android_symbols.py dist/*.aab --target target --ndk "$ANDROID_NDK_HOME" --output dist/native-debug-symbols.zip
+          python scripts/verify_android_bundle.py dist/*.aab
           cd dist
-          sha256sum *.apk > android-SHA256SUMS.txt
+          sha256sum *.apk *.aab *.zip > android-SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: android-aarch64-preview
+          name: android-signing-tools
+          path: target/android-signing-tools/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64-unsigned
           path: dist/*
           if-no-files-found: error
       - name: Attach release assets

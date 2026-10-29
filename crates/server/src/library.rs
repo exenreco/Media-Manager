@@ -9,6 +9,45 @@ pub struct Folder {
 fn folder(state: &AppState, value: &str) -> Result<PathBuf, ApiError> {
     rename::scoped_folder(&state.root, value).map_err(|e| error(StatusCode::BAD_REQUEST, e))
 }
+
+pub async fn inventory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(query): Json<Folder>,
+) -> Result<Json<RenamePlan>, ApiError> {
+    authenticate(&state, &headers)?;
+    let permit = state
+        .gate
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| error(StatusCode::CONFLICT, "Another file operation is running"))?;
+    let scan_state = state.clone();
+    let plan = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        rename::inventory(&scan_state.root, &query.folder)
+    })
+    .await
+    .map_err(|_| {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Library scan interrupted",
+        )
+    })?
+    .map_err(|e| error(StatusCode::BAD_REQUEST, e))?;
+    let mut plans = state
+        .plans
+        .lock()
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Plan store unavailable"))?;
+    plans.retain(|_, (created, _)| created.elapsed() < Duration::from_secs(900));
+    if plans.len() >= 32 {
+        return Err(error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many pending library views; reconnect later",
+        ));
+    }
+    plans.insert(plan.id, (Instant::now(), plan.clone()));
+    Ok(Json(plan))
+}
 pub async fn search(
     State(state): State<AppState>,
     headers: HeaderMap,

@@ -183,6 +183,8 @@ fn App() -> Element {
     let mut form = use_signal(Form::default);
     let mut connection = use_signal(Connection::default);
     let mut plan = use_signal(|| None::<RenamePlan>);
+    let mut library_inventory = use_signal(|| None::<RenamePlan>);
+    let mut loading_library = use_signal(|| false);
     let mut snapshot = use_signal(|| None::<(Form, Connection)>);
     let mut busy = use_signal(|| false);
     let mut refreshing = use_signal(|| false);
@@ -201,6 +203,7 @@ fn App() -> Element {
     let mut left_width = use_signal(|| 340.0f64);
     let mut right_width = use_signal(|| 300.0f64);
     let mut active_panel = use_signal(|| "welcome");
+    let workspace_open = use_memo(move || active_panel() != "welcome");
     let (navigate, mut connection_notice) =
         onboarding::use_navigation(connection, active_panel, busy);
     let mut drag = use_signal(|| None::<PanelDrag>);
@@ -293,6 +296,58 @@ fn App() -> Element {
         }
     });
 
+    // File discovery uses only the connection and subfolder, never metadata fields.
+    let library_context = use_memo(move || (connection(), form().folder));
+    let mut loaded_library = use_signal(|| None::<(Connection, String)>);
+    let pending_library =
+        use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<dioxus::core::Task>)));
+    use_effect(move || {
+        let context = library_context();
+        let blocked = busy() || !persistence_ready() || resume.read().is_some();
+        let open = workspace_open();
+        if let Some(task) = pending_library.borrow_mut().take() {
+            task.cancel();
+        }
+        loading_library.set(false);
+        if blocked || !open || loaded_library.peek().as_ref() == Some(&context) {
+            return;
+        }
+        let same_folder = loaded_library
+            .peek()
+            .as_ref()
+            .is_some_and(|(c, folder)| *c == context.0 && *folder == context.1);
+        if !same_folder {
+            plan.set(None);
+            snapshot.set(None);
+            library_inventory.set(None);
+            selected.set(None);
+        }
+        loading_library.set(true);
+        *pending_library.borrow_mut() = Some(spawn(async move {
+            let result = context.0.inventory(&context.1).await;
+            if *library_context.peek() != context {
+                return;
+            }
+            match result {
+                Ok(files) => {
+                    loaded_library.set(Some(context.clone()));
+                    let has_preview = plan.peek().as_ref().is_some_and(|p| !p.inventory)
+                        && snapshot
+                            .peek()
+                            .as_ref()
+                            .is_some_and(|(f, c)| *f == *form.peek() && *c == context.0);
+                    if !has_preview {
+                        selected.set(None);
+                        plan.set(Some(files.clone()));
+                    }
+                    library_inventory.set(Some(files));
+                }
+                Err(error) => message.set(format!("Could not load library files: {error:#}")),
+            }
+            loading_library.set(false);
+        }));
+    });
+
     // Debounce edits without disabling the form. Cancelling superseded tasks prevents
     // older provider responses from replacing a preview for newer details.
     let pending_preview =
@@ -300,13 +355,23 @@ fn App() -> Element {
     use_effect(move || {
         let f = form();
         let c = connection();
-        let page = active_panel();
-        let blocked = busy() || confirming() || !persistence_ready() || resume.read().is_some();
+        let open = workspace_open();
+        let blocked = busy()
+            || loading_library()
+            || confirming()
+            || !persistence_ready()
+            || resume.read().is_some();
         if let Some(task) = pending_preview.borrow_mut().take() {
             task.cancel();
         }
         refreshing.set(false);
-        if page == "welcome" || blocked {
+        if !open || blocked {
+            return;
+        }
+        if f.name.trim().is_empty()
+            && plan.peek().as_ref().is_some_and(|p| p.inventory)
+            && !*consumed.peek()
+        {
             return;
         }
         if snapshot
@@ -323,15 +388,41 @@ fn App() -> Element {
         *pending_preview.borrow_mut() = Some(spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(650)).await;
             if f.name.trim().is_empty() {
-                plan.set(None);
+                if *consumed.peek() {
+                    match c.inventory(&f.folder).await {
+                        Ok(files) if *form.peek() == f && *connection.peek() == c => {
+                            library_inventory.set(Some(files))
+                        }
+                        Ok(_) => {
+                            refreshing.set(false);
+                            return;
+                        }
+                        Err(error) => {
+                            message.set(format!("Could not refresh library files: {error:#}"));
+                            refreshing.set(false);
+                            return;
+                        }
+                    }
+                    consumed.set(false);
+                }
+                plan.set(library_inventory.peek().clone());
+                snapshot.set(None);
                 selected.set(None);
-                message.set("Enter a title to load your library preview.".into());
+                message.set("Browse your files now. Add Details when you want matching and rename suggestions.".into());
                 refreshing.set(false);
                 return;
             }
             let request = match f.request() {
                 Ok(request) => request,
                 Err(error) => {
+                    if let Ok(files) = c.inventory(&f.folder).await {
+                        if *form.peek() == f && *connection.peek() == c {
+                            library_inventory.set(Some(files.clone()));
+                            plan.set(Some(files));
+                            snapshot.set(None);
+                            selected.set(None);
+                        }
+                    }
                     message.set(error.to_string());
                     refreshing.set(false);
                     return;
@@ -352,16 +443,28 @@ fn App() -> Element {
                     message
                         .set("Preview updated. Review every destination before applying.".into());
                 }
-                Err(error) => message.set(format!("{error:#}")),
+                Err(error) => {
+                    if let Ok(files) = c.inventory(&f.folder).await {
+                        if *form.peek() == f && *connection.peek() == c {
+                            library_inventory.set(Some(files.clone()));
+                            plan.set(Some(files));
+                            snapshot.set(None);
+                            selected.set(None);
+                        }
+                    }
+                    message.set(format!("Files remain available. Rename preview: {error:#}"));
+                }
             }
             refreshing.set(false);
         }));
     });
 
-    let changed = snapshot
-        .read()
-        .as_ref()
-        .is_some_and(|(f, c)| *f != *form.read() || *c != *connection.read());
+    let browsing = plan.read().as_ref().is_none_or(|p| p.inventory);
+    let changed = !browsing
+        && snapshot
+            .read()
+            .as_ref()
+            .is_some_and(|(f, c)| *f != *form.read() || *c != *connection.read());
     let rows = plan
         .read()
         .as_ref()
@@ -387,6 +490,7 @@ fn App() -> Element {
         .filter(|p| p.status == TaskStatus::Ready)
         .count();
     let can_apply = (ready > 0 || poster_count > 0)
+        && !browsing
         && !conflict
         && !changed
         && !busy()
@@ -398,7 +502,10 @@ fn App() -> Element {
         .read()
         .as_ref()
         .and_then(|(f, _)| f.request().ok())
-        .unwrap_or_default();
+        .unwrap_or_else(|| PlanRequest {
+            movie: form_value.movie,
+            ..Default::default()
+        });
     let preview_show = plan
         .read()
         .as_ref()
@@ -447,7 +554,7 @@ fn App() -> Element {
     rsx! {
         style { "{CSS}" }
         {update_notice}
-        if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
+        if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} ads::NativeAdBridge {} }
         onboarding::ConnectionIsland {notice:connection_notice,active:active_panel,onlibrary:move |_|navigate.call("preview")}
         main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(matches!(active_panel(),"preview"|"inspector"|"posters") && if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
             onpointermove: move |e| {
@@ -567,9 +674,6 @@ fn App() -> Element {
                 section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Workspace details", "aria-busy":(busy() || refreshing()).to_string(),
                     if busy() || refreshing() {workspace::PageSpinner {label:if refreshing(){"Updating preview…"}else{"Working…"}}}
                     fieldset { disabled: busy() || confirming() || resume.read().is_some(),
-                        if cfg!(any(target_os = "android", target_os = "ios")) {
-                            ads::NativeAdSlot {}
-                        }
                         section { class: "settings-group naming-group",
                         h2 { if form_value.movie { "Movie Details" } else { "TV Show Details" } }
                         label { if form_value.movie { "Movie title" } else { "Series name" }
@@ -595,6 +699,9 @@ fn App() -> Element {
                         }
                         if matches!(form_value.source.as_str(),"tvmaze"|"omdb"|"custom"|"tmdb") && (!form_value.movie || form_value.source!="tvmaze") {
                             library_tools::MatchPicker {form,connection,busy,message,onselected:move |title|connection_notice.set(onboarding::Notice::MatchSelected(title))}
+                        }
+                        if cfg!(any(target_os = "android", target_os = "ios")) {
+                            ads::NativeAdSlot {placement:"details"}
                         }
                         if !form_value.movie {
                             if form_value.source == "manual" {
@@ -638,14 +745,14 @@ fn App() -> Element {
                 if active_panel()=="settings" {
                     section {class:"panel settings-panel","aria-label":"Settings",
                         div {class:"preview-heading",div {p {class:"eyebrow","PREFERENCES & HISTORY"} h2 {"Settings"}}}
-                        {updates_panel}
                         library_tools::RenameHistory {connection,form,plan,busy,message,consumed}
+                        {updates_panel}
                         if cfg!(any(target_os = "android", target_os = "ios")) {ads::AdPreferences {}}
                         p {class:"status",role:"status","{message}"}
                     }
                 }
-                div { class: "center-column","aria-busy":(busy() || refreshing()).to_string(),
-                    if busy() || refreshing() {workspace::PageSpinner {label:if refreshing(){"Updating library…"}else{"Working…"}}}
+                div { class: "center-column","aria-busy":(busy() || refreshing() || loading_library()).to_string(),
+                    if busy() || refreshing() || loading_library() {workspace::PageSpinner {label:if loading_library(){"Loading library files…"}else if refreshing(){"Updating library…"}else{"Working…"}}}
                 section { class: "panel preview", id: "rename-preview",
                     div { class: "preview-heading library-heading",
                         div {p {class:"eyebrow","YOUR WORKSPACE"} h2 { "Media library" }}
@@ -655,18 +762,19 @@ fn App() -> Element {
                     div {class:"library-search",workspace::Icon {name:"search"} input {r#type:"search",value:"{search}",placeholder:"Search files…","aria-label":"Search library files",oninput:move|e|search.set(e.value())}}
                         button {class:"library-ordering-button",r#type:"button",title:"Ordering settings","aria-label":"Open ordering settings","aria-haspopup":"dialog","aria-controls":"ordering-dialog",disabled:busy() || confirming() || resume.read().is_some(),onclick:move |_|show_ordering.set(true),workspace::Icon {name:"ordering"}}
                     }
+                    if cfg!(any(target_os = "android", target_os = "ios")) {ads::NativeAdSlot {placement:"library"}}
 
-                    p { class: "hint",match preview_request.options.numbering {
+                    if !browsing {p { class: "hint",match preview_request.options.numbering {
                         tv_manager_core::Numbering::Sequence=>"Files are paired in natural filename order. Review carefully if episodes are missing.",
                         tv_manager_core::Numbering::Detected=>"Episode numbers are read from filenames. Custom mappings take precedence. Review every match.",
                         tv_manager_core::Numbering::Absolute=>"Absolute numbers map to the provider's episode order. Confirm anime ordering and specials before applying."
-                    }}
+                    }}}
                     p { role: "status", class: "status", "{message}" }
                     if !persistence_error().is_empty() { p { role: "alert", class: "notice", "{persistence_error}" } }
                     if changed { p { class: "notice", "Settings changed. The preview refreshes automatically before applying." } }
                     if conflict { p { class: "notice", "Resolve destination conflicts, then build a new preview." } }
                     if groups.is_empty() {
-                        div { class: "empty",workspace::Icon {name:"library"} h3 { "A little order. A better library." } p { "Enter your details in Workspace to refresh the library preview automatically. Review every change before applying." } button {class:"primary",onclick:move|_|navigate.call("naming"),"Open Workspace"} }
+                        div { class: "empty",workspace::Icon {name:"library"} h3 {if loading_library(){"Loading your files…"}else{"No media files found"}} p {"Choose a folder containing supported media files. Details are optional for browsing your library."} button {class:"primary",onclick:move|_|navigate.call("welcome"),"Check connection"} }
                     } else {
                         for group in &groups {
                         details { class: "season-group", open: true, key: "{group.title(preview_request.movie)}",
@@ -683,14 +791,14 @@ fn App() -> Element {
                                         onclick:move|_|{if !row.directory {selected.set(Some(index));active_panel.set("inspector");}},
                                         onkeydown:move|e|{if !row.directory && (e.key()==Key::Enter || e.key()==Key::Character(" ".into())){e.prevent_default();selected.set(Some(index));active_panel.set("inspector");}},
                                         td { title: "{row.source.display()}", "{row.source.file_name().unwrap_or_default().to_string_lossy()}" }
-                                        td { title: "{row.target.display()}", "{row.target.file_name().unwrap_or_default().to_string_lossy()}" }
-                                        td { span { class: if matches!(row.status, TaskStatus::Conflict | TaskStatus::Failed) { "error" } else { "" }, "{row.status:?}" }
+                                        td { title: "{row.target.display()}", if browsing {"—"} else {"{row.target.file_name().unwrap_or_default().to_string_lossy()}"} }
+                                        td { span { class: if matches!(row.status, TaskStatus::Conflict | TaskStatus::Failed) { "error" } else { "" }, if browsing {"Available"}else{"{row.status:?}"} }
                                             if !row.message.is_empty() { small { "{row.message}" } }
                                         }
                                         td { class: "file-actions",
                                             if !row.directory {
                                                 button { r#type: "button", class: "row-action", title: "Edit proposed filename", "aria-label": "Edit proposed filename",
-                                                    disabled: busy() || changed || consumed(), onclick: move |e| {e.stop_propagation();selected.set(Some(index));active_panel.set("inspector");},
+                                                    disabled: busy() || browsing || changed || consumed(), onclick: move |e| {e.stop_propagation();selected.set(Some(index));active_panel.set("inspector");},
                                                     svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.8",
                                                         path { d: "m16 3 5 5-12 12-6 1 1-6L16 3Z" } path { d: "m13 6 5 5" }
                                                     }
@@ -736,7 +844,7 @@ fn App() -> Element {
                         }
                     }
                 }
-            if plan.read().is_some() { footer { class: "apply-bar", role: "toolbar", "aria-label": "Library actions",
+            if plan.read().is_some() && !browsing { footer { class: "apply-bar", role: "toolbar", "aria-label": "Library actions",
                 div {
                     strong { "{ready} renames · {poster_count} poster downloads ready" }
                     p { class: "hint", "Review before applying. Rename history keeps original names for Undo." }
@@ -763,7 +871,7 @@ fn App() -> Element {
                     if active_panel()=="posters" {
                         poster::PosterInspector {selection:selected_artwork,inventory:artwork_inventory,plan,connection,busy,onclose:move |_|workspace::close_preview()}
                     } else {
-                        workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:changed || consumed() || confirming(),busy,message,onclose:move |_|workspace::close_preview()}
+                        workspace::Inspector {selected,plan,connection:snapshot.read().as_ref().map(|(_,c)|c.clone()).unwrap_or_else(||connection_value.clone()),disabled:browsing || changed || consumed() || confirming(),busy,message,onclose:move |_|workspace::close_preview()}
                     }
                 }
                 section { class: "panel controls artwork-panel", id: "poster-naming-settings", "aria-label": "Artwork settings and preview",
@@ -787,9 +895,6 @@ fn App() -> Element {
                                 a { class: "poster-credit", href: "https://www.tvmaze.com", target: "_blank", rel: "noopener noreferrer", "Artwork via TVMaze" }
                             }
                         }
-                    }
-                    if cfg!(any(target_os = "android", target_os = "ios")) {
-                        div {class:"poster-ad",ads::NativeAdSlot { posters: true }}
                     }
 
                     }

@@ -191,6 +191,9 @@ pub struct RenameTask {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RenamePlan {
     pub id: Uuid,
+    /// A read-only file listing, independent of provider metadata or naming rules.
+    #[serde(default)]
+    pub inventory: bool,
     pub show: Show,
     pub tasks: Vec<RenameTask>,
     pub missing: Vec<Episode>,
@@ -203,6 +206,48 @@ pub struct RenamePlan {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FilenameEdit {
     pub filename: String,
+}
+
+pub fn inventory(root: &Path, relative: &str) -> Result<RenamePlan> {
+    let folder = scoped_folder(root, relative)?;
+    let tasks = media_files(&folder)?
+        .into_iter()
+        .map(|source| {
+            let metadata = fs::metadata(&source)?;
+            let season = detected_episode(&source)
+                .map(|(season, _)| season)
+                .or_else(|| {
+                    source
+                        .parent()?
+                        .ancestors()
+                        .take_while(|p| p.starts_with(&folder))
+                        .find_map(|p| {
+                            p.file_name()
+                                .and_then(|s| s.to_str())
+                                .and_then(season_in_name)
+                        })
+                });
+            Ok(RenameTask {
+                target: source.clone(),
+                source,
+                status: TaskStatus::Unchanged,
+                message: String::new(),
+                directory: false,
+                season,
+                length: metadata.len(),
+                modified: metadata.modified().ok(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(RenamePlan {
+        id: Uuid::new_v4(),
+        inventory: true,
+        show: Show::default(),
+        tasks,
+        missing: vec![],
+        posters: vec![],
+        root: folder,
+    })
 }
 
 pub async fn preview(root: &Path, request: &PlanRequest) -> Result<RenamePlan> {
@@ -395,6 +440,7 @@ pub fn build_plan(
     };
     Ok(RenamePlan {
         id: Uuid::new_v4(),
+        inventory: false,
         show,
         tasks,
         missing,
@@ -539,6 +585,10 @@ fn check_source(root: &Path, task: &RenameTask) -> Result<()> {
 /// Edit a filename in a preview only; paths and source fingerprints remain owned
 /// by the backend. Resolve every affected collision again after an edit.
 pub fn edit_target(plan: &mut RenamePlan, index: usize, filename: &str) -> Result<()> {
+    anyhow::ensure!(
+        !plan.inventory,
+        "Choose naming details before editing a rename preview"
+    );
     if plan
         .tasks
         .iter()
@@ -672,6 +722,10 @@ pub fn playback_path(plan: &RenamePlan, index: usize) -> Result<PathBuf> {
 /// and directories run deepest-first so child paths remain valid.
 /// A batch can partially succeed. Every result is retained in the returned plan.
 pub fn apply(plan: &mut RenamePlan) -> Result<()> {
+    anyhow::ensure!(
+        !plan.inventory,
+        "A library listing cannot be applied as a rename preview"
+    );
     if plan.tasks.iter().any(|t| t.status == TaskStatus::Conflict) {
         bail!("Resolve preview conflicts before applying");
     }
@@ -721,6 +775,34 @@ pub fn apply(plan: &mut RenamePlan) -> Result<()> {
 #[cfg(test)]
 mod media_format_tests {
     use super::*;
+    #[test]
+    fn connected_library_lists_files_without_metadata_and_cannot_rename() {
+        let root = tempfile::tempdir().unwrap();
+        let season = root.path().join("Season 02");
+        fs::create_dir(&season).unwrap();
+        fs::write(season.join("Episode 10.mp4"), b"ten").unwrap();
+        fs::write(season.join("Episode 2.mp4"), b"two").unwrap();
+        fs::write(root.path().join("Show.S03E01.mkv"), b"three").unwrap();
+        let mut plan = inventory(root.path(), "").unwrap();
+        assert!(plan.inventory);
+        assert!(plan.show.name.is_empty());
+        assert_eq!(plan.tasks.len(), 3);
+        assert_eq!(plan.tasks[0].source.file_name().unwrap(), "Episode 2.mp4");
+        assert_eq!(plan.tasks[0].season, Some(2));
+        assert_eq!(plan.tasks[2].season, Some(3));
+        assert!(plan
+            .tasks
+            .iter()
+            .all(|task| task.source == task.target && task.status == TaskStatus::Unchanged));
+        assert_eq!(fs::read(playback_path(&plan, 0).unwrap()).unwrap(), b"two");
+        assert!(edit_target(&mut plan, 0, "Changed.mp4").is_err());
+        assert!(apply(&mut plan).is_err());
+        assert_eq!(fs::read(season.join("Episode 2.mp4")).unwrap(), b"two");
+        assert_eq!(inventory(root.path(), "Season 02").unwrap().tasks.len(), 2);
+        assert!(inventory(root.path(), "..").is_err());
+        let empty = tempfile::tempdir().unwrap();
+        assert!(inventory(empty.path(), "").unwrap().tasks.is_empty());
+    }
     #[test]
     fn library_recognizes_video_containers_without_treating_sidecars_as_video() {
         for extension in [

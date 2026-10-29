@@ -101,9 +101,9 @@ whole slot is visible. Compact layouts omit optional body/advertiser views and
 retain attribution, headline, media, CTA and AdChoices. Bridge readiness is
 retried briefly at mount. SDK failures are logged under MediaManagerAds.
 
-A second mobile ad placement appears below the poster panel, above its navigation.
-One native SDK ad view follows the visible placement; the two placeholders do not
-duplicate the same ad view or create extra requests when switching panels.
+Mobile ad slots follow the Details provider ID and the Artwork/Library search
+controls. One native SDK ad view follows the visible placement; placeholders do
+not duplicate the ad view or create extra requests when switching panels.
 
 
 ### Fullscreen ads
@@ -111,3 +111,12 @@ duplicate the same ad view or create extra requests when switching panels.
 Interstitials are offered only immediately after a completed rename batch with no failures and at least one renamed file. The native layer requires two minutes in the current session and ten minutes between interstitial impressions. Unavailable ads are skipped; no delayed presentation is queued. Background apps, open dialogs, busy operations and playing videos block UI requests.
 
 Settings offers an optional rewarded ad for 30 minutes without native or fullscreen ads on this device. Only the SDK earned-reward callback saves the expiration in native preferences; closing early gives no reward. The benefit survives app restarts. The SDK controls ad dismissal. Privacy choices gate all requests; changing them discards cached fullscreen ads. Cached ads expire after one hour. Debug builds use Google's test IDs; release builds use the configured production IDs.
+
+### One-time ad removal
+
+Android Settings also offers a non-consumable Google Play purchase and restore
+action. Signed native receipts control ownership and suppress all ad formats;
+pending payments do not unlock it. Purchases remain unavailable until the app's
+licensing public key and active Play product are configured. See
+[Android billing setup](../../../docs/ANDROID_BILLING.md) for product IDs, build
+variables, offline/refund behavior and the required internal-track payment tests.

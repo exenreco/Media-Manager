@@ -280,6 +280,7 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/search", post(library::search))
+        .route("/v1/library", post(library::inventory))
         .route("/v1/history", post(library::history_list))
         .route("/v1/history/{id}/undo", post(library::undo))
         .route("/v1/plans/{id}/health", post(library::health_scan))
@@ -401,6 +402,7 @@ mod tests {
         let app = app(root.path().into());
         for (method, path, body) in [
             ("GET", "/v1/health", String::new()),
+            ("POST", "/v1/library", "{\"folder\":\"\"}".into()),
             ("POST", "/v1/plans/00000000-0000-0000-0000-000000000000/artwork", String::new()),
             ("POST", "/v1/plans/00000000-0000-0000-0000-000000000000/artwork/download", String::new()),
             ("POST", "/v1/plans/00000000-0000-0000-0000-000000000000/artwork/save", serde_json::json!({"slot":"poster.jpg","url":"https://example.test/poster.jpg","replace":false,"expected":null}).to_string()),
@@ -439,6 +441,69 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
+    }
+
+    #[tokio::test]
+    async fn library_listing_without_details_supports_playback_and_rejects_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("Unknown.S01E01.mp4"), b"media bytes").unwrap();
+        let app = app(root.path().into());
+        let response = app
+            .clone()
+            .oneshot(request("POST", "/v1/library", "{\"folder\":\"\"}".into()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let plan: RenamePlan =
+            serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                .unwrap();
+        assert!(plan.inventory);
+        assert!(plan.show.name.is_empty());
+        assert_eq!(plan.tasks.len(), 1);
+        let response = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                &format!("/v1/plans/{}/tasks/0/play", plan.id),
+                String::new(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let ticket: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1000).await.unwrap()).unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(
+                "GET",
+                &format!("/v1/media/{}", ticket["ticket"].as_str().unwrap()),
+                String::new(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            to_bytes(response.into_body(), 100).await.unwrap().as_ref(),
+            b"media bytes"
+        );
+        let response = app
+            .clone()
+            .oneshot(request(
+                "PATCH",
+                &format!("/v1/plans/{}/tasks/0", plan.id),
+                "{\"filename\":\"Changed.mp4\"}".into(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response = app
+            .oneshot(request("POST", "/v1/library", "{\"folder\":\"..\"}".into()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            std::fs::read(root.path().join("Unknown.S01E01.mp4")).unwrap(),
+            b"media bytes"
+        );
     }
 
     #[tokio::test]

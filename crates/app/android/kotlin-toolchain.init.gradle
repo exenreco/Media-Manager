@@ -9,11 +9,29 @@ gradle.beforeProject { project ->
             throw new GradleException('Set MEDIA_MANAGER_ANDROID_ICONS to assets/branding/icons/android')
         }
         def android = project.extensions.getByName('android')
+        def billingProduct = System.getenv('MEDIA_MANAGER_AD_FREE_PRODUCT') ?: 'remove_ads'
+        if (!(billingProduct ==~ /[a-z0-9][a-z0-9._]{0,99}/)) {
+            throw new GradleException('Invalid MEDIA_MANAGER_AD_FREE_PRODUCT')
+        }
+        // This is the public licensing key, never a service-account private key.
+        def billingKeyPath = System.getenv('MEDIA_MANAGER_PLAY_PUBLIC_KEY_FILE')
+        def billingKey = billingKeyPath ? new File(billingKeyPath).getText('UTF-8').replaceAll(/\s/, '') : (System.getenv('MEDIA_MANAGER_PLAY_PUBLIC_KEY') ?: '').replaceAll(/\s/, '')
+        if (billingKey && !(billingKey ==~ /[A-Za-z0-9+\/=]+/)) {
+            throw new GradleException('PLAY_PUBLIC_KEY must be the Base64 Google Play licensing public key')
+        }
+        android.buildFeatures.buildConfig = true
+        android.defaultConfig.buildConfigField('String', 'AD_FREE_PRODUCT_ID', groovy.json.JsonOutput.toJson(billingProduct))
+        android.defaultConfig.buildConfigField('String', 'PLAY_BILLING_PUBLIC_KEY', groovy.json.JsonOutput.toJson(billingKey))
         android.sourceSets.getByName('main').res.srcDir(iconPath)
+        def billingTests = new File(iconPath, '../../../../crates/app/android/tests/native').canonicalFile
+        if (billingTests.isDirectory()) {
+            android.sourceSets.getByName('test').java.srcDir(billingTests)
+            project.dependencies.add('testImplementation', 'junit:junit:4.13.2')
+        }
         if (System.getenv('MEDIA_MANAGER_PLAY_BUNDLE') == 'true') {
           project.extensions.getByName('androidComponents').finalizeDsl { androidDsl ->
-            androidDsl.defaultConfig.versionCode = (System.getenv('MEDIA_MANAGER_VERSION_CODE') ?: '1000005').toInteger()
-            androidDsl.defaultConfig.versionName = '1.0.0-beta.4'
+            androidDsl.defaultConfig.versionCode = (System.getenv('MEDIA_MANAGER_VERSION_CODE') ?: '1000006').toInteger()
+            androidDsl.defaultConfig.versionName = '1.0.0'
             androidDsl.defaultConfig.ndk.abiFilters.clear()
             androidDsl.defaultConfig.ndk.abiFilters.add('arm64-v8a')
             androidDsl.buildTypes.getByName('release').signingConfig = null

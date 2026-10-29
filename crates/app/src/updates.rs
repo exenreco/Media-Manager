@@ -451,10 +451,12 @@ pub fn UpdatePanel(mut updater: Updater, blocked: bool) -> Element {
     let downloaded = updater.downloaded.read().clone();
     rsx! {section {class:"settings-group update-settings",
         h2 {"App updates"} p {class:"hint","Installed version: {CURRENT}"}
-        label {"Release channel" select {value:if preferences.beta{"beta"}else{"stable"},disabled:working,
+        div {class:"update-preferences-row",
+        label {class:"update-channel","Release channel" select {value:if preferences.beta{"beta"}else{"stable"},disabled:working,
             onchange:move |e|{let mut p=updater.preferences.peek().clone();p.beta=e.value()=="beta";updater.preferences_changed(p);},
             option {value:"stable","Stable"} option {value:"beta","Beta and stable"}}}
         label {class:"check",input {r#type:"checkbox",checked:preferences.automatic,disabled:working,onchange:move |e|{let mut p=updater.preferences.peek().clone();p.automatic=e.checked();updater.preferences_changed(p);}},"Check automatically every 12 hours"}
+        }
         button {class:"secondary",disabled:working,onclick:move |_|{spawn(async move {updater.check().await;});},"Check for updates"}
         if let Some(update)=available {
             p {"Update {update.version} available"}

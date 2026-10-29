@@ -124,6 +124,34 @@ impl Connection {
         Ok(())
     }
 
+    pub async fn inventory(&self, folder: &str) -> Result<RenamePlan> {
+        if !self.remote {
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            return crate::mobile_storage::inventory(&self.root, folder).await;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                anyhow::ensure!(!self.root.trim().is_empty(), "Choose a media folder first");
+                let root = self.root.clone();
+                let folder = folder.to_owned();
+                return tokio::task::spawn_blocking(move || {
+                    rename::inventory(&PathBuf::from(root), &folder)
+                })
+                .await?;
+            }
+        }
+        let (client, url) = self.client()?;
+        decode(
+            client
+                .post(url.join("/v1/library")?)
+                .bearer_auth(&self.token)
+                .json(&serde_json::json!({"folder":folder}))
+                .send()
+                .await
+                .context("Could not load files from the paired server")?,
+        )
+        .await
+    }
+
     pub async fn preview(&self, request: &PlanRequest) -> Result<RenamePlan> {
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -737,6 +765,22 @@ mod local_pairing_tests {
         connection.root = folder.path().join("missing").to_string_lossy().into();
         assert!(connection.validate().await.is_err());
         assert_eq!(std::fs::read(file).unwrap(), b"test");
+    }
+
+    #[tokio::test]
+    async fn local_inventory_does_not_need_title_year_or_provider_credentials() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("Unknown.S01E01.mp4"), b"original").unwrap();
+        let connection = Connection {
+            root: folder.path().to_string_lossy().into(),
+            ..Default::default()
+        };
+        connection.validate().await.unwrap();
+        let plan = connection.inventory("").await.unwrap();
+        assert!(plan.inventory);
+        assert_eq!(plan.tasks.len(), 1);
+        let media = connection.preview_media(plan, 0).await.unwrap();
+        assert_eq!(media.size, 8);
     }
 
     #[tokio::test]

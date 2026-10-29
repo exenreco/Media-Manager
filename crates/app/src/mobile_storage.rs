@@ -142,21 +142,43 @@ fn mirror(
 }
 
 pub async fn preview(root: &str, request: &PlanRequest) -> Result<RenamePlan> {
+    prepare_library(root, request, false).await
+}
+
+pub async fn inventory(root: &str, folder: &str) -> Result<RenamePlan> {
+    prepare_library(
+        root,
+        &PlanRequest {
+            folder: folder.into(),
+            ..Default::default()
+        },
+        true,
+    )
+    .await
+}
+
+async fn prepare_library(root: &str, request: &PlanRequest, inventory: bool) -> Result<RenamePlan> {
     if root.is_empty() {
         bail!("Choose a media folder first");
     }
     let response = command(json!({"op":"list", "root":root})).await?;
     let entries: Vec<Entry> = serde_json::from_value(response["entries"].clone())?;
-    let (directory, mirror) = mirror(
-        &entries,
-        response["name"].as_str().unwrap_or("Library"),
-        Some(std::path::Path::new(
-            response["cache"]
-                .as_str()
-                .context("Native cache directory unavailable")?,
-        )),
-    )?;
-    let plan = rename::preview(&mirror, request).await?;
+    let cache = PathBuf::from(
+        response["cache"]
+            .as_str()
+            .context("Native cache directory unavailable")?,
+    );
+    let name = response["name"].as_str().unwrap_or("Library").to_owned();
+    let mirror_entries = entries.clone();
+    let (directory, mirror) =
+        tokio::task::spawn_blocking(move || mirror(&mirror_entries, &name, Some(&cache))).await??;
+    let plan = if inventory {
+        let root = mirror.clone();
+        let folder = request.folder.clone();
+        tokio::task::spawn_blocking(move || rename::inventory(&root, &folder)).await??
+    } else {
+        rename::preview(&mirror, request).await?
+    };
     *LIBRARY.lock().unwrap() = Some(Library {
         state: PathBuf::from(
             response["state"]
@@ -174,6 +196,10 @@ pub async fn preview(root: &str, request: &PlanRequest) -> Result<RenamePlan> {
 }
 
 pub async fn apply(mut plan: RenamePlan) -> Result<RenamePlan> {
+    anyhow::ensure!(
+        !plan.inventory,
+        "A library listing cannot be applied as a rename preview"
+    );
     if plan.tasks.iter().any(|t| t.status == TaskStatus::Conflict) {
         bail!("Resolve preview conflicts first");
     }
@@ -505,6 +531,24 @@ mod tests {
             modified: 123,
             identity: path.into(),
         }
+    }
+    #[test]
+    fn names_only_inventory_does_not_need_a_provider_or_title() {
+        let (_directory, root) = mirror(
+            &[entry("Season 4", true), entry("Season 4/04.mkv", false)],
+            "Library",
+            None,
+        )
+        .unwrap();
+        let plan = rename::inventory(&root, "").unwrap();
+        assert!(plan.inventory);
+        assert!(plan.show.name.is_empty());
+        assert_eq!(plan.tasks.len(), 1);
+        assert_eq!(plan.tasks[0].season, Some(4));
+        assert_eq!(
+            relative(&root, &plan.tasks[0].source).unwrap(),
+            "Season 4/04.mkv"
+        );
     }
     #[test]
     fn provider_paths_cannot_escape_cache() {

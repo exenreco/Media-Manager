@@ -154,3 +154,5 @@ main[data-view=posters] .layout>.artwork-panel{display:grid;grid-template-rows:m
 @media(max-width:760px){.dock-more>svg{display:block;width:20px;height:20px;place-self:center;margin:0;padding:0}}
 
 .update-notice{position:fixed;top:58px;left:50%;transform:translateX(-50%);z-index:25;display:flex;align-items:center;gap:12px;width:max-content;max-width:calc(100vw - 24px);padding:12px 18px;background:#202720;border:1px solid #556b5d;border-radius:16px;box-shadow:0 8px 32px #0008;font-size:14px;flex-wrap:wrap}.update-notice button{padding:8px 12px}.update-settings select{display:block;margin:8px 0 14px;min-height:40px;background:#171717;color:#ddd;padding:8px;border:1px solid #444}.update-settings .check{display:flex;gap:10px;align-items:center;margin:14px 0}.update-settings button{margin:8px 8px 8px 0}
+
+.update-preferences-row{display:flex;align-items:center;gap:20px;flex-wrap:wrap}.update-preferences-row .update-channel{display:flex;align-items:center;gap:12px;margin:0}.update-preferences-row .update-channel select{width:auto;min-width:150px;margin:0}.update-preferences-row .check{margin:0}

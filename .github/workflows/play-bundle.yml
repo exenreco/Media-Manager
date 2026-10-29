@@ -7,13 +7,15 @@ permissions:
   contents: read
 env:
   CARGO_INCREMENTAL: '0'
+  MEDIA_MANAGER_PLAY_PUBLIC_KEY: ${{ vars.PLAY_BILLING_PUBLIC_KEY }}
+  MEDIA_MANAGER_AD_FREE_PRODUCT: ${{ vars.AD_FREE_PRODUCT_ID }}
 jobs:
   android-bundle:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       MEDIA_MANAGER_PLAY_BUNDLE: 'true'
-      MEDIA_MANAGER_VERSION_CODE: '1000005'
+      MEDIA_MANAGER_VERSION_CODE: '1000006'
       CARGO_PROFILE_RELEASE_DEBUG: '1'
       CARGO_PROFILE_RELEASE_STRIP: 'none'
       RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
@@ -63,7 +65,7 @@ jobs:
           mkdir -p dist/play-bundle
           bundle=$(find target/dx -path '*/outputs/bundle/release/*.aab' -type f -print -quit)
           test -n "$bundle"
-          cp "$bundle" dist/play-bundle/Media-Manager-1.0.0-beta.4-android-arm64-unsigned.aab
+          cp "$bundle" dist/play-bundle/Media-Manager-1.0.0-android-arm64-unsigned.aab
           python scripts/export_android_symbols.py dist/play-bundle/*.aab --target target --ndk "$ANDROID_NDK_HOME" --output dist/play-bundle/native-debug-symbols.zip
           python scripts/verify_android_bundle.py dist/play-bundle/*.aab
           cd dist/play-bundle

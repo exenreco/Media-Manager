@@ -33,36 +33,36 @@ Playback compatibility and decoder requirements are documented in [Media playbac
 - Resume saved settings after confirmation, transparent splash and desktop completion notifications.
 - Android and iOS native AdMob source integrations with test ads in debug builds.
 
-Version 1.0.0-beta.4 includes title-match selection, anime absolute
+Version 1.0.0 includes title-match selection, anime absolute
 numbering and explicit episode mappings, companion-file renaming, durable rename
 history and Undo, alternate TVMaze/TMDB artwork, preview health scans, saved naming
 profiles, and single-use QR pairing with a remote server. See
 [Library tools](docs/LIBRARY_TOOLS.md) for setup and limits, and
-[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in the v1.0.0-beta.4 previews.
+[Mobile validation](docs/MOBILE_VALIDATION.md) for test coverage and device acceptance. These features are included in version 1.0.0.
 
 ## Platform status and downloads
 
-This is a **preview**, not a finished five-platform production release. A successful
-build is not a substitute for native UI and device testing.
+Version **1.0.0** is the stable source release. Platform packaging and device
+limitations remain listed below; a stable version does not replace device testing.
 
 | Platform | Release artifact | Current limits |
 | --- | --- | --- |
 | Windows x64 | Setup EXE and portable ZIP | Setup installs WebView2 if missing; publisher signing depends on release configuration |
 | macOS Apple Silicon / Intel | PKG installer and portable ZIP | Ad-hoc signed app; installer is not Developer ID signed or notarized |
 | Linux x64 | DEB, Flatpak with managed runtime, or TAR.GZ | DEB targets Ubuntu 24.04+ compatible systems; Flatpak supplies GTK/WebKitGTK |
-| Android ARM64 | Installable debug-signed preview APK | GitHub previews use test ads; private upload-key signing produces Play AABs separately; physical-device acceptance pending |
+| Android ARM64 | Release-signed APK and Play upload AAB | Release APK uses production ads; ad removal requires Play product/key configuration; physical-device acceptance pending |
 | iOS ARM64 Simulator | Simulator app ZIP | For Xcode Simulator, not an installable iPhone IPA; device signing remains pending |
 
 The tag-triggered [release workflow](.github/workflows/release.yml) builds each
 platform on its native host and attaches successful artifacts and SHA-256 checksums
-to a GitHub prerelease. Assets appear as jobs finish. A missing asset means that
+to a staging prerelease, promoted to stable after validation. Assets appear as jobs finish. A missing asset means that
 platform job has not completed successfully; check Actions before downloading.
-The v1.0.0-beta.4 source and mobile previews include Android document-tree selection and
+The v1.0.0 source and mobile previews include Android document-tree selection and
 iOS security-scoped folder selection for local previews, renaming, posters and
 playback. Both mobile integrations have compiled in native CI; device/provider
 validation is still pending. Mobile background jobs and notifications remain unfinished.
 
-Download the [v1.0.0-beta.4 previews](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0-beta.4).
+Download [Media Manager 1.0.0](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0).
 
 The beta release includes Windows setup, macOS PKG and Linux DEB installers
 alongside portable downloads and the managed Linux Flatpak. See [desktop installation](docs/INSTALLATION.md)
@@ -90,8 +90,10 @@ From the repository root:
 cargo run -p tv-manager-app --locked
 ```
 
-Select a media folder, configure naming and metadata, let the preview refresh, inspect
-all destinations, and confirm applying it. Renames affect real files; a batch can
+Connect a local or paired library, then open Library to browse and play its media
+files. Browsing does not require a title, year, API key, or provider match. Add
+naming and metadata in Details when you want rename suggestions; let the preview
+refresh, inspect all destinations, and confirm applying it. Renames affect real files; a batch can
 partially succeed; completed operations are recorded for explicit Undo. Existing destination files are never
 overwritten. See the [user guide](docs/USER_GUIDE.md) for matching rules and limitations.
 
@@ -136,13 +138,13 @@ dx build --platform ios --no-default-features --features mobile
 Advertising SDK setup, publisher requirements and native validation:
 [Android](crates/app/android/README.md) Â· [iOS](crates/app/ios/README.md).
 iOS needs the documented SDK embedding/signing step before installation/export.
-Release CI produces mobile previews with test ads. The separate
+Android release builds use production ad units; debug and iOS Simulator builds use test ads. The separate
 [Play bundle workflow](.github/workflows/play-bundle.yml) builds an unsigned ARM64
 release AAB targeting API 36, retains native Rust symbols, and exports a matching
 `native-debug-symbols.zip`. Sign privately with
 [scripts/sign_android_bundle.ps1](scripts/sign_android_bundle.ps1); never publish
 upload keys or passwords. See [Android release builds](docs/ANDROID_RELEASE.md).
-The existing Play upload uses version code 1000004; the next build uses 1000005.
+The existing Play upload uses version code 1000004; the 1.0.0 build uses 1000006.
 
 Android compatibility playback uses bundled LibVLC; iOS uses VLCKit. Desktop and
 paired compatibility conversion needs FFmpeg installed on the library host.
