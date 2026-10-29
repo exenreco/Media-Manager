@@ -333,13 +333,13 @@ class MainActivity : WryActivity() {
     }
 
     override fun onResume() {
-        super.onResume(); foreground = true; billing.refresh(); positionAd(); fullscreen.state(); fullscreen.load()
+        super.onResume(); foreground = true; billing.resume(); positionAd(); fullscreen.state(); fullscreen.load()
         if (!started && bounds?.optBoolean("eligible") == true) {
             started = true; requestConsent()
         }
     }
     override fun onPause() {
-        foreground = false; mediaPreviews.pause(); adView?.visibility = View.GONE; super.onPause()
+        foreground = false; billing.pause(); mediaPreviews.pause(); adView?.visibility = View.GONE; super.onPause()
     }
     override fun onDestroy() {
         dead = true; billing.close(); fullscreen.close(); discardAd(); mediaPreviews.clear(); storage.close(); browser = null; super.onDestroy()
@@ -683,6 +683,16 @@ private class AdRemovalBilling(
     private var price = ""
     private var message = ""
     private var epoch = 0
+    private var active = false
+    private var queryId = 0L
+    private val sync = PlayEntitlementSync()
+    private val poll = Runnable { if (active && !closed) refresh() }
+    private fun scheduleRefresh(delay: Long = if (pending) 15_000L else 300_000L) {
+        handler.removeCallbacks(poll)
+        if (active && !closed) handler.postDelayed(poll, delay)
+    }
+    fun resume() { active = true; refresh() }
+    fun pause() { active = false; handler.removeCallbacks(poll) }
     private var acknowledgements = mutableSetOf<String>()
     var owned = cachedOwnership(); private set
     val suppressesAds: Boolean get() = owned || flow || settling || checkingOwnership
@@ -717,10 +727,10 @@ private class AdRemovalBilling(
             override fun onBillingSetupFinished(result: com.android.billingclient.api.BillingResult) = ui {
                 connecting = false
                 if (ok(result)) { refresh(); queryPrice() }
-                else { checkingOwnership = false; settling = false; changed(); message = "Google Play billing is unavailable. Check your connection and try Restore purchases."; state() }
+                else { checkingOwnership = false; settling = false; changed(); message = "Google Play billing is unavailable. Check your connection and try Restore purchases."; state(); scheduleRefresh(30_000) }
             }
             override fun onBillingServiceDisconnected() = ui {
-                connecting = false; price = ""; state()
+                connecting = false; price = ""; state(); scheduleRefresh(5_000)
             }
         })
     }
@@ -729,16 +739,37 @@ private class AdRemovalBilling(
         if (closed || !configured) { state(); return }
         if (!client.isReady) { connect(); return }
         if (querying || flow) { state(); return }
+        val request = ++queryId
+        val revision = sync.revision
         querying = true; message = if (restore) "Restoring purchases…" else "Checking Google Play purchases…"; state()
+        handler.postDelayed({
+            if (!closed && querying && request == queryId) {
+                ++queryId; querying = false; checkingOwnership = false; settling = false
+                message = "Google Play is taking longer than expected. Retrying automatically."
+                changed(); state(); scheduleRefresh(15_000)
+            }
+        }, 30_000)
         client.queryPurchasesAsync(com.android.billingclient.api.QueryPurchasesParams.newBuilder()
             .setProductType(com.android.billingclient.api.BillingClient.ProductType.INAPP).build()) { result, purchases -> ui {
+            if (request != queryId) return@ui
             querying = false
             checkingOwnership = false
             settling = false
+            if (!sync.acceptsQuery(revision)) {
+                state(); scheduleRefresh(15_000); return@ui
+            }
             if (ok(result)) {
                 epoch++
-                val purchase = purchases.firstOrNull { verified(it) }
-                pending = purchases.any { productId in it.products && it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PENDING }
+                val cached = runCatching { com.android.billingclient.api.Purchase(prefs.getString("receipt", "") ?: "", prefs.getString("signature", "") ?: "") }.getOrNull()
+                // PURCHASED cannot become PENDING again for the same token. Play
+                // may briefly return its earlier pending receipt after delivery.
+                val purchase = purchases.firstOrNull { verified(it) } ?: cached?.takeIf { saved ->
+                    verified(saved) && purchases.any {
+                        sync.isPendingRegression(saved.purchaseToken, it.purchaseToken,
+                            it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PENDING)
+                    }
+                }
+                pending = purchase == null && purchases.any { productId in it.products && it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PENDING }
                 owned = purchase != null
                 if (purchase != null) {
                     prefs.edit().putString("receipt", purchase.originalJson).putString("signature", purchase.signature).apply()
@@ -756,6 +787,7 @@ private class AdRemovalBilling(
             } else message = "Could not check purchases. Previously verified ad removal is kept. Try Restore purchases when online."
             changed()
             state()
+            scheduleRefresh(if (ok(result)) { if (pending) 15_000L else 300_000L } else 30_000L)
             if (price.isEmpty()) queryPrice()
         } }
     }
@@ -769,7 +801,7 @@ private class AdRemovalBilling(
             if (!ok(result)) {
                 message = "Ads removed. Keep Google Play connected to finish confirming your purchase."; state()
                 if (attempt < 2) handler.postDelayed({ if (!closed && version == epoch) acknowledge(purchase, version, attempt + 1) }, 10_000)
-            }
+            } else scheduleRefresh(2_000)
         } }
     }
 
@@ -807,7 +839,25 @@ private class AdRemovalBilling(
     }
 
     override fun onPurchasesUpdated(result: com.android.billingclient.api.BillingResult, purchases: List<com.android.billingclient.api.Purchase>?) = ui {
-        finishPurchase(result)
+        // A purchase event is not a full ownership snapshot. Consume the signed
+        // receipt directly; a cached query must not overwrite this newer event.
+        val purchase = if (ok(result)) purchases?.firstOrNull { verified(it) } else null
+        if (purchase != null) {
+            sync.purchaseEvent(); epoch++
+            flow = false; settling = false; checkingOwnership = false; pending = false; owned = true
+            prefs.edit().putString("receipt", purchase.originalJson).putString("signature", purchase.signature).apply()
+            message = "Ads removed. Thank you for supporting Media Manager."
+            acknowledge(purchase, epoch)
+            changed(); state(); scheduleRefresh(15_000)
+        } else if (ok(result) && purchases?.any {
+            productId in it.products && it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PENDING
+        } == true) {
+            sync.purchaseEvent()
+            flow = false; settling = false; checkingOwnership = false
+            pending = !owned
+            message = if (owned) "Ads removed." else "Payment pending. Ads will be removed after Google Play confirms payment."
+            changed(); state(); scheduleRefresh(15_000)
+        } else finishPurchase(result)
     }
     private fun finishPurchase(result: com.android.billingclient.api.BillingResult) {
         flow = false
@@ -821,6 +871,15 @@ private class AdRemovalBilling(
         }
     }
     fun close() { closed = true; handler.removeCallbacksAndMessages(null); client.endConnection() }
+}
+
+/** Prevent a query started before a purchase event from undoing that event. */
+internal class PlayEntitlementSync {
+    var revision = 0L; private set
+    fun purchaseEvent() { revision++ }
+    fun acceptsQuery(startedAt: Long) = startedAt == revision
+    fun isPendingRegression(verifiedToken: String, queryToken: String, isPending: Boolean) =
+        verifiedToken.isNotBlank() && verifiedToken == queryToken && isPending
 }
 
 /** Fullscreen objects are single use. Entitlements never come from WebView messages. */

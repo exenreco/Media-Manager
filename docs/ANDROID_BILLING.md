@@ -1,6 +1,6 @@
 # Android: one-time ad removal
 
-The same Android app supports free and paid users. Settings → Advertising offers
+The same Android app supports free and paid users. Settings â†’ Advertising offers
 **Remove ads** with the localized Google Play price and **Restore purchases**.
 This is a non-consumable purchase: never consume it. A purchase removes native,
 interstitial and rewarded ads on Android. It does not unlock iOS or desktop
@@ -89,14 +89,76 @@ References: [Billing integration](https://developer.android.com/google/play/bill
 [Billing security](https://developer.android.com/google/play/billing/security),
 [Billing testing](https://developer.android.com/google/play/billing/test).
 
-## Current validation
+## Current validation — October 29, 2026
 
-Snapshot `d5ccd25efd25f486263a5bb34826b6e92ecc51b6` passed Android ARM64 and
-x86_64 builds, native RSA receipt-signature tests, emulator installation/launch
-and both inline H.264 playback fixtures in
-[40824586252](https://github.com/exenreco/Media-Manager/actions/runs/40824586252).
-All 35 JavaScript tests passed. Windows, macOS and Linux regression checks passed
-in [40824573993](https://github.com/exenreco/Media-Manager/actions/runs/40824573993).
-The public key and Play product were not configured, so no real purchase,
-pending-payment, acknowledgement, restore or refund transaction was exercised.
-Those require the internal-track acceptance checks above. No release was published.
+- Product `remove_ads` is active at USD 5.99, with one `standard` Buy option,
+  Google-generated regional prices, and multi-quantity disabled.
+- Repository variables `PLAY_BILLING_PUBLIC_KEY` (RSA-2048 public key) and
+  `AD_FREE_PRODUCT_ID=remove_ads` are configured. The existing Media Manager
+  Internal Testers list is enabled for license testing with `RESPOND_NORMALLY`.
+- Android version name **1.0.0**, version code **1000008**, includes the configured
+  key and the fix allowing Settings, purchase and restore before connecting a
+  library. Settings does not start library scans or provider requests.
+- [Play release build 40926073208](https://github.com/exenreco/Media-Manager/actions/runs/40926073208)
+  passed key validation, generated release configuration checks, bridge tests,
+  native receipt tests, bundle and APK packaging, ABI/alignment checks and symbol
+  export. APK and AAB were signed locally with the existing upload identity and
+  their embedded public key was verified.
+- [Android validation 40926078786](https://github.com/exenreco/Media-Manager/actions/runs/40926078786)
+  passed ARM64 and x86_64 builds, native receipt tests, emulator launch and H.264
+  8-bit/10-bit inline playback. The navigation-policy regression test passed
+  locally; formatting and diff checks passed.
+
+### Live Google Play license-test results
+
+Tested in the API 35 Google Play emulator using the x86_64 debug APK from the
+same source revision as the signed release packages:
+
+| Check | Result |
+| --- | --- |
+| Settings opens without a media folder | Passed |
+| Product lookup and localized USD 5.99 price | Passed |
+| Checkout uses Test card, always approves, with no charge | Passed |
+| Cancel checkout leaves the app unowned | Passed |
+| Successful test purchase displays Ads removed | Passed |
+| Receipt verifies against the configured Google Play RSA public key | Passed |
+| Package/product, PURCHASED state and quantity 1 | Passed |
+| Google Play acknowledgement after purchase refresh | Passed |
+| Clear only test-app data: cached receipt absent | Passed |
+| Fresh launch restores signed, acknowledged entitlement from Play | Passed |
+| Restore purchases button retains verified ad-free ownership | Passed |
+
+The test receipt and purchase token were not exported or logged. Local evidence
+contains screenshots and validation flags only under `dist/play-billing/live-tests`.
+The signed packages and matching native symbols are under
+`dist/play-billing/1000008`. The new bundle is an **internal testing** release;
+this does not publish the app to production.
+
+### Refund and pending-payment follow-up
+
+All transactions used no-charge license-test instruments on the same emulator
+and sideloaded debug build, rather than a Play-installed signed release.
+
+| Check | Observed result |
+| --- | --- |
+| Refund and revoke | Console confirmed Refunded. App retained cached ownership through Restore and restarts; an approved Store data reset restored unowned status with no receipt. Automatic revocation did not pass. |
+| Slow decline | No paid entitlement while pending, including after app restart. Console confirmed Canceled. App remained pending until an approved Store data reset. Automatic cancellation reconciliation did not pass. |
+| Slow approval | No entitlement while pending. Console then confirmed Processed, but Restore and a Store process restart still returned pending with no verified receipt. Final delivery and acknowledgement remain unresolved. |
+
+Evidence under `dist/play-billing/live-tests` includes
+`pending-test-final-orders.png`, `test-order-refunded.png`,
+`slow-decline-pending-after-restart.jpg`, `slow-decline-final-unowned.jpg`,
+`slow-approve-checkout.jpg`, `slow-approve-pending-unowned.jpg` and
+`slow-approve-processed-client-still-pending.jpg`. No raw receipts or tokens
+were exported.
+
+**Release limitation:** withholding entitlement before payment passed, but timely
+synchronization did not. Refund and pending acceptance are not fully passed.
+Investigate Play caching and repeat on a physical device with the Play-installed
+release. The client-only verifier cannot independently establish current server
+ownership when Play returns stale signed purchases. Backend purchase verification
+and real-time developer notifications would provide stronger reconciliation.
+Store data resets are a test workaround, not an acceptable user recovery flow.
+
+Connectivity loss during acknowledgement, offline restart and physical-device
+Play-installed release checks also remain outstanding.
