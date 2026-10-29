@@ -9,6 +9,21 @@ use native::wry::http::{Request, Response};
 
 const CHUNK: u64 = 1024 * 1024;
 
+/// Android uses the same native decoder as fullscreen playback, aligned with this slot.
+#[component]
+pub fn AndroidInlinePreview(source: String) -> Element {
+    use_effect(|| {
+        let _ = document::eval(include_str!("android-inline-player.js"));
+    });
+    use_drop(|| {
+        let _ = document::eval("window.mediaManagerInlineCleanup?.()");
+    });
+    rsx! { div {class:"android-inline-preview", "data-native-source":source,
+        role:"group", "aria-label":"Video preview", style:"width:100%;height:100%;min-height:180px",
+        span {class:"hint","Preparing video preview…"}
+    }}
+}
+
 #[derive(Clone)]
 pub enum Location {
     #[cfg(not(target_os = "android"))]

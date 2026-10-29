@@ -7,6 +7,8 @@ permissions:
   contents: read
 env:
   CARGO_INCREMENTAL: '0'
+  MEDIA_MANAGER_PLAY_PUBLIC_KEY: ${{ vars.PLAY_BILLING_PUBLIC_KEY }}
+  MEDIA_MANAGER_AD_FREE_PRODUCT: ${{ vars.AD_FREE_PRODUCT_ID }}
   RELEASE_TAG: 'v1.0.0-beta.4'
 jobs:
   installer:

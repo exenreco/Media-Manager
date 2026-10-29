@@ -35,11 +35,15 @@ typealias BuildConfig = com.tvshowmanager.app.BuildConfig
 class MainActivity : WryActivity() {
     private val mediaPreviews by lazy { MediaPreviews(this) }
     private val storage by lazy { LocalStorage(this,mediaPreviews) }
+    private val billing by lazy { AdRemovalBilling(this,
+        { state -> browser?.evaluateJavascript("window.mediaManagerBillingState?.(${state})", null) },
+        { discardAd(); fullscreen.reset(); positionAd(); if (!fullscreenSuppressed()) { loadAd(); fullscreen.load() } }) }
     private val fullscreen: FullscreenAds by lazy { FullscreenAds(this,
-        { !dead && foreground && sdkReady && consent?.canRequestAds() == true },
+        { !dead && foreground && sdkReady && !billing.suppressesAds && consent?.canRequestAds() == true },
         { state -> state.put("privacyRequired", consent?.privacyOptionsRequirementStatus == ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED); browser?.evaluateJavascript("window.mediaManagerFullscreenState?.(${state})", null) },
+        { billing.owned },
         { positionAd(); if (!fullscreenSuppressed()) loadAd() }) }
-    private fun fullscreenSuppressed(): Boolean = fullscreen.suppressed
+    private fun fullscreenSuppressed(): Boolean = fullscreen.suppressed || billing.suppressesAds
     private var browser: WebView? = null
     private var adView: NativeAdView? = null
     private var nativeAd: NativeAd? = null
@@ -66,7 +70,12 @@ class MainActivity : WryActivity() {
                 val fixture=java.io.File(filesDir,"compatibility-fixture.mp4")
                 if(fixture.isFile) {
                     val prepared=mediaPreviews.local(android.net.Uri.fromFile(fixture),fixture.length(),"video/mp4")
-                    mediaPreviews.play("/native-media-preview/"+prepared.getString("token"))
+                    val source="/native-media-preview/"+prepared.getString("token")
+                    if (intent.getBooleanExtra("media_manager_inline_fixture",false)) {
+                        mediaPreviews.inline(JSONObject().put("source",source).put("visible",true)
+                            .put("x",16).put("y",160).put("width",webView.width-32)
+                            .put("height",webView.width*0.6).put("viewportWidth",webView.width),webView)
+                    } else mediaPreviews.play(source)
                 }
             },1500)
         }
@@ -84,6 +93,9 @@ class MainActivity : WryActivity() {
             val data = runCatching { JSONObject(message.data ?: "") }.getOrNull()
                 ?: return@addWebMessageListener
             when (data.optString("type")) {
+                "billing-state" -> { billing.state(); billing.refresh() }
+                "billing-buy" -> if (foreground && !fullscreen.presenting) billing.buy()
+                "billing-restore" -> billing.refresh(true)
                 "fullscreen-state" -> { fullscreen.state(); fullscreen.load(); if (!started) { started = true; requestConsent() } }
                 "interstitial" -> fullscreen.show(false)
                 "rewarded" -> { fullscreen.show(true); if (consent?.canRequestAds() != true) requestConsent() }
@@ -187,7 +199,7 @@ class MainActivity : WryActivity() {
         loader = AdLoader.Builder(this, unit)
             .forNativeAd { ad ->
                 loading = false
-                if (dead || isFinishing || isDestroyed) { ad.destroy() }
+                if (dead || fullscreenSuppressed() || isFinishing || isDestroyed) { ad.destroy() }
                 else {
                     discardAd()
                     nativeAd = ad
@@ -321,7 +333,7 @@ class MainActivity : WryActivity() {
     }
 
     override fun onResume() {
-        super.onResume(); foreground = true; positionAd(); fullscreen.state(); fullscreen.load()
+        super.onResume(); foreground = true; billing.refresh(); positionAd(); fullscreen.state(); fullscreen.load()
         if (!started && bounds?.optBoolean("eligible") == true) {
             started = true; requestConsent()
         }
@@ -330,7 +342,7 @@ class MainActivity : WryActivity() {
         foreground = false; mediaPreviews.pause(); adView?.visibility = View.GONE; super.onPause()
     }
     override fun onDestroy() {
-        dead = true; fullscreen.close(); discardAd(); mediaPreviews.clear(); storage.close(); browser = null; super.onDestroy()
+        dead = true; billing.close(); fullscreen.close(); discardAd(); mediaPreviews.clear(); storage.close(); browser = null; super.onDestroy()
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).roundToInt()
 
@@ -358,6 +370,11 @@ private class LocalStorage(private val activity: MainActivity, private val media
         activity.runOnUiThread { web.evaluateJavascript(script, null) }
     }
     fun handle(command: JSONObject, web: WebView) {
+        if (command.optString("op") == "inlineMediaBounds") {
+            runCatching { mediaPreviews.inline(command, web) }
+                .onFailure { android.util.Log.w("MediaManagerPlayback", "Inline player unavailable", it) }
+            return
+        }
         if (command.optString("op") == "appDirectories") {
             reply(web,command,JSONObject().put("state",activity.filesDir.absolutePath));return
         }
@@ -630,11 +647,182 @@ class PairingCaptureActivity : com.journeyapps.barcodescanner.CaptureActivity() 
     }
 }
 
+internal object PlayPurchaseSignature {
+    fun verify(key: java.security.PublicKey, receipt: ByteArray, signature: ByteArray): Boolean = runCatching {
+        java.security.Signature.getInstance("SHA1withRSA").run {
+            initVerify(key); update(receipt); verify(signature)
+        }
+    }.getOrDefault(false)
+}
+
+/** Play owns payment UI and receipts. Web content can request actions, never grant ownership. */
+private class AdRemovalBilling(
+    private val activity: MainActivity,
+    private val publish: (JSONObject) -> Unit,
+    private val changed: () -> Unit
+) : com.android.billingclient.api.PurchasesUpdatedListener {
+    private val prefs = activity.getSharedPreferences("play_ad_removal", android.content.Context.MODE_PRIVATE)
+    private val handler = Handler(Looper.getMainLooper())
+    private val productId = BuildConfig.AD_FREE_PRODUCT_ID
+    private val key = runCatching {
+        java.security.KeyFactory.getInstance("RSA").generatePublic(java.security.spec.X509EncodedKeySpec(
+            android.util.Base64.decode(BuildConfig.PLAY_BILLING_PUBLIC_KEY, android.util.Base64.DEFAULT)))
+    }.getOrNull()
+    private val client = com.android.billingclient.api.BillingClient.newBuilder(activity)
+        .setListener(this)
+        .enablePendingPurchases(com.android.billingclient.api.PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
+        .enableAutoServiceReconnection().build()
+    private var connecting = false
+    private var querying = false
+    private var pricing = false
+    private var flow = false
+    private var closed = false
+    private var pending = false
+    private var price = ""
+    private var message = ""
+    private var epoch = 0
+    private var acknowledgements = mutableSetOf<String>()
+    var owned = cachedOwnership(); private set
+    val suppressesAds: Boolean get() = owned || flow
+    private val configured: Boolean get() = key != null
+    private fun ok(result: com.android.billingclient.api.BillingResult) = result.responseCode == com.android.billingclient.api.BillingClient.BillingResponseCode.OK
+    private fun ui(block: () -> Unit) { activity.runOnUiThread { if (!closed) block() } }
+
+    private fun verified(purchase: com.android.billingclient.api.Purchase): Boolean = runCatching {
+        if (key == null || purchase.packageName != activity.packageName || productId !in purchase.products ||
+            purchase.purchaseState != com.android.billingclient.api.Purchase.PurchaseState.PURCHASED ||
+            purchase.purchaseToken.isBlank() || purchase.quantity != 1) return@runCatching false
+        PlayPurchaseSignature.verify(key, purchase.originalJson.toByteArray(Charsets.UTF_8),
+            android.util.Base64.decode(purchase.signature, android.util.Base64.DEFAULT))
+    }.getOrDefault(false)
+
+    private fun cachedOwnership(): Boolean = runCatching {
+        verified(com.android.billingclient.api.Purchase(prefs.getString("receipt", "") ?: "", prefs.getString("signature", "") ?: ""))
+    }.getOrDefault(false)
+
+    fun state() {
+        if (closed) return
+        publish(JSONObject().put("supported", true).put("owned", owned).put("busy", connecting || querying || pricing || flow)
+            .put("presenting", flow).put("pending", pending).put("price", price)
+            .put("available", configured && client.isReady && price.isNotEmpty() && !pending)
+            .put("message", if (!configured) "Purchases are not available in this build yet." else message))
+    }
+
+    private fun connect() {
+        if (closed || !configured || connecting) { state(); return }
+        connecting = true; state()
+        client.startConnection(object : com.android.billingclient.api.BillingClientStateListener {
+            override fun onBillingSetupFinished(result: com.android.billingclient.api.BillingResult) = ui {
+                connecting = false
+                if (ok(result)) { refresh(); queryPrice() }
+                else { message = "Google Play billing is unavailable. Check your connection and try Restore purchases."; state() }
+            }
+            override fun onBillingServiceDisconnected() = ui {
+                connecting = false; price = ""; state()
+            }
+        })
+    }
+
+    fun refresh(restore: Boolean = false) {
+        if (closed || !configured) { state(); return }
+        if (!client.isReady) { connect(); return }
+        if (querying || flow) { state(); return }
+        querying = true; message = if (restore) "Restoring purchases…" else "Checking Google Play purchases…"; state()
+        client.queryPurchasesAsync(com.android.billingclient.api.QueryPurchasesParams.newBuilder()
+            .setProductType(com.android.billingclient.api.BillingClient.ProductType.INAPP).build()) { result, purchases -> ui {
+            querying = false
+            if (ok(result)) {
+                epoch++
+                val purchase = purchases.firstOrNull { verified(it) }
+                pending = purchases.any { productId in it.products && it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PENDING }
+                owned = purchase != null
+                if (purchase != null) {
+                    prefs.edit().putString("receipt", purchase.originalJson).putString("signature", purchase.signature).apply()
+                    message = "Ads removed. Thank you for supporting Media Manager."
+                    acknowledge(purchase, epoch)
+                } else {
+                    prefs.edit().remove("receipt").remove("signature").apply()
+                    message = when {
+                        pending -> "Payment pending. Ads will be removed after Google Play confirms payment."
+                        purchases.any { productId in it.products && it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PURCHASED } -> "The purchase could not be verified. Contact support."
+                        restore -> "No Remove ads purchase was found for this Google Play account."
+                        else -> "Pay once to remove all ads on Android. No subscription."
+                    }
+                }
+                changed()
+            } else message = "Could not check purchases. Previously verified ad removal is kept. Try Restore purchases when online."
+            state()
+            if (price.isEmpty()) queryPrice()
+        } }
+    }
+
+    private fun acknowledge(purchase: com.android.billingclient.api.Purchase, version: Int, attempt: Int = 0) {
+        if (closed || purchase.isAcknowledged || !acknowledgements.add(purchase.purchaseToken)) return
+        client.acknowledgePurchase(com.android.billingclient.api.AcknowledgePurchaseParams.newBuilder()
+            .setPurchaseToken(purchase.purchaseToken).build()) { result -> ui {
+            acknowledgements.remove(purchase.purchaseToken)
+            if (version != epoch) return@ui
+            if (!ok(result)) {
+                message = "Ads removed. Keep Google Play connected to finish confirming your purchase."; state()
+                if (attempt < 2) handler.postDelayed({ if (!closed && version == epoch) acknowledge(purchase, version, attempt + 1) }, 10_000)
+            }
+        } }
+    }
+
+    private fun queryPrice(onReady: ((com.android.billingclient.api.ProductDetails) -> Unit)? = null) {
+        if (closed || pricing || !client.isReady) return
+        pricing = true; state()
+        client.queryProductDetailsAsync(com.android.billingclient.api.QueryProductDetailsParams.newBuilder().setProductList(listOf(
+            com.android.billingclient.api.QueryProductDetailsParams.Product.newBuilder().setProductId(productId)
+                .setProductType(com.android.billingclient.api.BillingClient.ProductType.INAPP).build())).build()) { result, details -> ui {
+            pricing = false
+            val product = if (ok(result)) details.productDetailsList.firstOrNull { it.productId == productId } else null
+            val offer = product?.oneTimePurchaseOfferDetailsList?.singleOrNull()
+            price = offer?.formattedPrice ?: ""
+            if (product == null || offer == null) {
+                message = "Remove ads is unavailable. Install the app from Google Play and try again later."
+                flow = false; changed(); state()
+            } else { state(); onReady?.invoke(product) }
+        } }
+    }
+
+    fun buy() {
+        if (closed || owned || pending || flow || connecting || querying || pricing || !configured) { state(); return }
+        if (!client.isReady) { connect(); return }
+        if (activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus()) return
+        flow = true; changed(); message = "Opening Google Play…"; state()
+        // Fetch fresh offer data for each checkout; never cache ProductDetails for a later purchase.
+        queryPrice { product ->
+            val offer = product.oneTimePurchaseOfferDetailsList!!.single()
+            val item = com.android.billingclient.api.BillingFlowParams.ProductDetailsParams.newBuilder()
+                .setProductDetails(product).setOfferToken(offer.offerToken).build()
+            val result = client.launchBillingFlow(activity, com.android.billingclient.api.BillingFlowParams.newBuilder()
+                .setProductDetailsParamsList(listOf(item)).build())
+            if (!ok(result)) finishPurchase(result)
+        }
+    }
+
+    override fun onPurchasesUpdated(result: com.android.billingclient.api.BillingResult, purchases: List<com.android.billingclient.api.Purchase>?) = ui {
+        finishPurchase(result)
+    }
+    private fun finishPurchase(result: com.android.billingclient.api.BillingResult) {
+        flow = false; changed()
+        when (result.responseCode) {
+            com.android.billingclient.api.BillingClient.BillingResponseCode.OK,
+            com.android.billingclient.api.BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> refresh(true)
+            com.android.billingclient.api.BillingClient.BillingResponseCode.USER_CANCELED -> { message = "Purchase cancelled. You have not been charged."; state() }
+            else -> { message = "Purchase could not be completed. Try again through Google Play."; state() }
+        }
+    }
+    fun close() { closed = true; handler.removeCallbacksAndMessages(null); client.endConnection() }
+}
+
 /** Fullscreen objects are single use. Entitlements never come from WebView messages. */
 private class FullscreenAds(
     private val activity: MainActivity,
     private val allowed: () -> Boolean,
     private val publish: (JSONObject) -> Unit,
+    private val paid: () -> Boolean,
     private val changed: () -> Unit
 ) {
     private val prefs = activity.getSharedPreferences("advertising", android.content.Context.MODE_PRIVATE)
@@ -650,16 +838,17 @@ private class FullscreenAds(
     private var closed = false
     var presenting = false; private set
     private var earned = false
-    val adFree: Boolean get() = prefs.getLong("adFreeUntil", 0L) > System.currentTimeMillis()
+    val adFree: Boolean get() = paid() || prefs.getLong("adFreeUntil", 0L) > System.currentTimeMillis()
     val suppressed: Boolean get() = adFree || presenting
     private val expiry = Runnable { state(); changed(); load() }
 
     fun state(message: String = "") {
         if (closed) return
         publish(JSONObject().put("adFreeUntil", prefs.getLong("adFreeUntil", 0L))
+            .put("permanentAdFree", paid())
             .put("presenting", presenting).put("rewardedReady", rewarded != null && fresh(rewardedAt)).put("message", message))
         handler.removeCallbacks(expiry)
-        if (adFree) handler.postDelayed(expiry, prefs.getLong("adFreeUntil", 0L) - System.currentTimeMillis() + 50)
+        if (!paid() && adFree) handler.postDelayed(expiry, prefs.getLong("adFreeUntil", 0L) - System.currentTimeMillis() + 50)
     }
     private fun fresh(time: Long) = android.os.SystemClock.elapsedRealtime() - time < 3_600_000
     fun reset() { generation++; interstitial = null; rewarded = null; loadingInterstitial = false; loadingRewarded = false; state() }
@@ -738,8 +927,30 @@ private class MediaPreviews(private val activity: MainActivity) {
     private val sources = java.util.concurrent.ConcurrentHashMap<String, Source>()
     private val streams = java.util.Collections.synchronizedSet(mutableSetOf<java.io.InputStream>())
     private var supported = false
+    private var browser: WebView? = null
     private var compatible: CompatiblePreview? = null
+    fun inline(command: JSONObject, web: WebView) {
+        activity.runOnUiThread {
+            val source = command.optString("source")
+            val token = source.removePrefix("/native-media-preview/")
+            if (source.isEmpty()) {
+                if (compatible?.inline == true) {compatible?.close(); compatible = null}
+                return@runOnUiThread
+            }
+            if (source != "/native-media-preview/$token" || !sources.containsKey(token)) return@runOnUiThread
+            // Fullscreen playback keeps ownership until its dialog is closed.
+            if (compatible?.inline == false && compatible?.isClosed == false) return@runOnUiThread
+            if (compatible?.token != token || compatible?.isClosed != false) {
+                compatible?.close(); compatible = null
+                if (!command.optBoolean("visible")) return@runOnUiThread
+                compatible = CompatiblePreview(activity, token, ::response, web).also { it.show() }
+            }
+            compatible?.position(command)
+        }
+    }
     fun attach(web: WebView) {
+        browser = web
+        supported = true
         if (android.os.Build.VERSION.SDK_INT < 26) return
         val original = web.webViewClient
         web.webViewClient = object : android.webkit.WebViewClient() {
@@ -763,8 +974,11 @@ private class MediaPreviews(private val activity: MainActivity) {
         val token = source.removePrefix("/native-media-preview/")
         require(source == "/native-media-preview/$token" && sources.containsKey(token)) { "Preview expired; select the file again" }
         activity.runOnUiThread {
+            if (!sources.containsKey(token)) return@runOnUiThread
             compatible?.close()
-            compatible = CompatiblePreview(activity, token, ::response).also { it.show() }
+            compatible = CompatiblePreview(activity, token, ::response, onClosed = {
+                activity.runOnUiThread {browser?.evaluateJavascript("window.mediaManagerInlineRefresh?.()",null)}
+            }).also { it.show() }
         }
     }
     fun pause(){activity.runOnUiThread {compatible?.pause()}}
@@ -790,7 +1004,7 @@ private class MediaPreviews(private val activity: MainActivity) {
         return register(Source(null,url.toString(),tls,command.getLong("size"),command.getString("mime")))
     }
     private fun register(source: Source): JSONObject {
-        require(supported) { "Inline preview requires Android 8 or newer. Open the file with your device video app." }
+        require(supported) { "The preview player is not attached yet. Select the file again." }
         require(source.size > 0) { "Empty media file" }
         clear()
         val token = java.util.UUID.randomUUID().toString(); sources[token] = source
@@ -855,9 +1069,14 @@ internal fun previewRange(value:String?,size:Long):Pair<Long,Long> {
 /** libVLC decoding stays out of the WebView. The loopback gateway preserves pinned TLS upstream. */
 private class CompatiblePreview(
     private val activity: MainActivity,
-    private val token: String,
-    private val response: (android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse
+    val token: String,
+    private val response: (android.webkit.WebResourceRequest) -> android.webkit.WebResourceResponse,
+    private val inlineWeb: WebView? = null,
+    private val onClosed: () -> Unit = {}
 ) {
+    val inline get() = inlineWeb != null
+    val isClosed get() = closed
+    private var root: LinearLayout? = null
     private val dialog = android.app.Dialog(activity)
     private val server = java.net.ServerSocket(0, 4, java.net.InetAddress.getByName("127.0.0.1"))
     private val workers = java.util.concurrent.ThreadPoolExecutor(2,2,0L,java.util.concurrent.TimeUnit.SECONDS,java.util.concurrent.ArrayBlockingQueue<Runnable>(4))
@@ -868,9 +1087,13 @@ private class CompatiblePreview(
     @Volatile private var closed = false
     fun show() {
         try {
+            if(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false)) {
+                java.io.File(activity.filesDir,"compatibility-fixture-events.txt").appendText(if(inline)"mode:inline\n" else "mode:fullscreen\n")
+            }
             val engine=org.videolan.libvlc.LibVLC(activity,arrayListOf("--no-video-title-show","--network-caching=1000"));lib=engine
             val mediaPlayer=org.videolan.libvlc.MediaPlayer(engine);player=mediaPlayer
             val column=LinearLayout(activity).apply {orientation=LinearLayout.VERTICAL;setBackgroundColor(Color.BLACK)}
+            root = column
             val status=TextView(activity).apply {text="Preparing compatibility player…";setTextColor(Color.WHITE);setPadding(16,16,16,16)}
             val video=org.videolan.libvlc.util.VLCVideoLayout(activity)
             column.addView(video,LinearLayout.LayoutParams(-1,0,1f));column.addView(status)
@@ -879,12 +1102,24 @@ private class CompatiblePreview(
             val controls=LinearLayout(activity).apply {gravity=Gravity.CENTER}
             val pause=Button(activity).apply {text="Pause";setOnClickListener {if(mediaPlayer.isPlaying){mediaPlayer.pause();text="Play"}else{mediaPlayer.play();text="Pause"}}}
             controls.addView(pause)
-            controls.addView(Button(activity).apply {text="Close";setOnClickListener {close()}})
+            if (!inline) controls.addView(Button(activity).apply {text="Close";setOnClickListener {close()}})
             column.addView(controls)
+            if (inline) {
+                status.textSize=11f;status.setPadding(8,0,8,0)
+                pause.textSize=12f;pause.minHeight=0;pause.minimumHeight=0;pause.setPadding(12,0,12,0)
+                val controlHeight=(40*activity.resources.displayMetrics.density).roundToInt()
+                column.removeView(seek)
+                controls.addView(seek,0,LinearLayout.LayoutParams(0,controlHeight,1f))
+                pause.layoutParams=LinearLayout.LayoutParams(-2,controlHeight)
+                column.visibility=View.GONE
+                activity.findViewById<FrameLayout>(android.R.id.content).addView(column,FrameLayout.LayoutParams(1,1))
+            } else {
             dialog.setContentView(column);dialog.setOnDismissListener {close()}
             dialog.show();dialog.window?.setLayout(-1,-1)
             dialog.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            mediaPlayer.attachViews(video,null,true,false)
+            }
+            // TextureView stays inside the inline bounds and follows sheet animations.
+            mediaPlayer.attachViews(video,null,true,inline)
             mediaPlayer.setEventListener {event ->
                 if(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false)) {
                     val state=when(event.type){
@@ -897,7 +1132,8 @@ private class CompatiblePreview(
                     if(state.isNotEmpty())java.io.File(activity.filesDir,"compatibility-fixture-events.txt").appendText("$state\n")
                 }
                 when(event.type) {
-                    org.videolan.libvlc.MediaPlayer.Event.Playing -> {status.text="Compatibility player";pause.text="Pause"}
+                    org.videolan.libvlc.MediaPlayer.Event.Playing -> {status.text=if(inline)"Video preview" else "Compatibility player";pause.text="Pause";if(inline && root?.visibility!=View.VISIBLE)mediaPlayer.pause()}
+                    org.videolan.libvlc.MediaPlayer.Event.Paused -> {status.text="Paused";pause.text="Play"}
                     org.videolan.libvlc.MediaPlayer.Event.EncounteredError -> status.text="Playback failed. The file may be damaged, protected, or the connection interrupted."
                     org.videolan.libvlc.MediaPlayer.Event.EndReached -> {status.text="Playback finished";pause.text="Play"}
                     org.videolan.libvlc.MediaPlayer.Event.Buffering -> status.text="Buffering ${event.buffering.toInt()}%"
@@ -914,17 +1150,40 @@ private class CompatiblePreview(
             media.setHWDecoderEnabled(true,false);mediaPlayer.media=media;media.release();mediaPlayer.play()
         }catch(error:Exception){android.util.Log.w("MediaManagerPlayback","Compatibility player initialization failed",error);close();android.widget.Toast.makeText(activity,"Could not start compatibility player",android.widget.Toast.LENGTH_LONG).show()}
     }
+    fun position(bounds: JSONObject) {
+        val web=inlineWeb ?: return
+        val view=root ?: return
+        val viewport=bounds.optDouble("viewportWidth",0.0)
+        val raw=listOf("x","y","width","height").map {bounds.optDouble(it,Double.NaN)}
+        if (!bounds.optBoolean("visible") || viewport<=0 || !viewport.isFinite() || raw.any{!it.isFinite()} || web.width<=0) {
+            view.visibility=View.GONE;player?.pause();return
+        }
+        val scale=web.width/viewport
+        val (x,y,width,height)=raw.map{(it*scale).roundToInt()}
+        if (x<0 || y<0 || width<1 || height<1 || x.toLong()+width>web.width+1L || y.toLong()+height>web.height+1L) {
+            view.visibility=View.GONE;player?.pause();return
+        }
+        val parent=activity.findViewById<FrameLayout>(android.R.id.content)
+        val origin=IntArray(2);val parentOrigin=IntArray(2)
+        web.getLocationInWindow(origin);parent.getLocationInWindow(parentOrigin)
+        view.layoutParams=FrameLayout.LayoutParams(width,height).apply {
+            leftMargin=origin[0]-parentOrigin[0]+x;topMargin=origin[1]-parentOrigin[1]+y
+        }
+        view.visibility=View.VISIBLE
+    }
     fun pause(){player?.pause()}
     fun close(){
         if(closed)return;closed=true
         handler.removeCallbacksAndMessages(null)
         runCatching {server.close()};synchronized(sockets){sockets.toList().forEach{runCatching{it.close()}};sockets.clear()}
         workers.shutdownNow()
+        root?.let {(it.parent as? android.view.ViewGroup)?.removeView(it)};root=null
         val oldPlayer=player;val oldEngine=lib;player=null;lib=null
         oldPlayer?.setEventListener(null);oldPlayer?.detachViews()
         // Native stop may wait for decoder/network teardown; never wait on the UI thread.
         Thread({runCatching {oldPlayer?.stop()};runCatching {oldPlayer?.release()};runCatching {oldEngine?.release()}},"media-preview-release").start()
         dialog.dismiss()
+        onClosed()
     }
     private fun serve(socket:java.net.Socket){
         try{socket.use {

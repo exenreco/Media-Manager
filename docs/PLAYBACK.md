@@ -1,12 +1,17 @@
 # Media playback
 
-The default inline preview uses the host WebView. Container extensions do not
-identify the video/audio codecs inside a file; an MP4 can still be unsupported.
+Android inline previews use bundled LibVLC, the same decoder as the fullscreen
+compatibility player. Its native view follows the preview area and pauses when
+hidden or backgrounded; it is released when the selection closes or changes.
+Other platforms use the host WebView for inline preview. Container extensions
+do not identify the codecs or H.264 profile/bit depth inside a file; an MP4 can
+still exceed a particular decoder's capabilities.
 
 Compatibility options in the selected-file preview:
 
 - Android: **Open compatibility player** uses bundled LibVLC in an in-app player
-  with play/pause, seeking and close controls. Local and paired media use the
+  with play/pause, seeking and close controls. Inline playback has play/pause
+  and seeking in the preview area. Local and paired media use the
   same permission-checked sources. Remote HTTPS remains validated by the native
   pinned-certificate gateway; the decoder connects only to an ephemeral loopback
   proxy with an opaque, session-specific path.
@@ -32,17 +37,19 @@ not a guarantee that every codec/profile, damaged file or protected stream can p
 
 The iOS decoder is VideoLAN's checksum-pinned 2026-09-29 VLCKit 4.0 development
 binary, matching its official Swift package distribution; device acceptance is
-required before shipping. Third-party license/source/relinking obligations must
-be fulfilled for decoder-containing release packages. No such release has been
-published by this change. See THIRD_PARTY_NOTICES.md.
+required before shipping to devices. Third-party license/source/relinking
+obligations apply to decoder-containing release packages. See THIRD_PARTY_NOTICES.md.
 
 Developer decoding check (debug Android APK only):
 
 ```powershell
 python scripts/android_playback_smoke.py --adb .tools/android-sdk/platform-tools/adb.exe --evidence .tools/codec-validation/decode-evidence
+python scripts/android_playback_smoke.py --adb .tools/android-sdk/platform-tools/adb.exe --inline --codec h264 --evidence .tools/inline-validation/h264
+python scripts/android_playback_smoke.py --adb .tools/android-sdk/platform-tools/adb.exe --inline --codec h264-10bit --evidence .tools/inline-validation/h264-10bit
 ```
 
-This uses FFmpeg to generate a private MPEG-4-in-MP4 fixture, waits for native
+This uses FFmpeg to generate private MP4 fixtures with MPEG-4 or H.264 video
+and AAC audio at 24 fps, waits for native
 playing/video-output events and checks that the app remains running. It does not
 validate every codec, physical-device performance or the paired HTTPS path.
 

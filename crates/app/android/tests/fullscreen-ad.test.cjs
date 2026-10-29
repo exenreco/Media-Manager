@@ -42,7 +42,23 @@ test('presentation suppresses native ads and duplicate requests; cleanup release
   h.window.mediaManagerFullscreenCleanup();assert.equal(h.listeners.size,0);assert.equal(h.window.mediaManagerRenameAd,undefined);assert.equal(h.dataset.adsPaused,undefined);
 });
 
+test('native inline playback blocks interstitial opportunities without a DOM video element',()=>{
+  const h=harness();h.window.mediaManagerNativePlaybackActive=true;
+  h.window.mediaManagerRenameAd();h.frame();assert.equal(h.messages.length,1);
+  h.window.mediaManagerNativePlaybackActive=false;
+  h.window.mediaManagerRenameAd();h.frame();assert.equal(h.messages.at(-1).type,'interstitial');
+});
+
 test('privacy options stay available when Settings controls mount after consent is checked',()=>{
   const h=harness();h.window.mediaManagerFullscreenState({adFreeUntil:0,presenting:false,rewardedReady:true,privacyRequired:true,message:''});
   h.privacy.hidden=true;h.tick();assert.equal(h.privacy.hidden,false);
+});
+
+test('paid ownership suppresses every ad opportunity without expiring like a reward',()=>{
+  const h=harness();h.window.mediaManagerPermanentAdFree=true;h.tick();
+  assert.equal(h.window.mediaManagerAdsSuppressed,true);assert.equal(h.dataset.adsPaused,'true');
+  assert.equal(h.button.disabled,true);assert.equal(h.button.textContent,'Ads removed');
+  h.now(1e12);h.tick();h.click();h.window.mediaManagerRenameAd();h.frame();assert.equal(h.messages.length,1);
+  h.window.mediaManagerPermanentAdFree=false;h.tick();assert.equal(h.dataset.adsPaused,'false');
+  h.window.mediaManagerBillingPresenting=true;h.tick();h.window.mediaManagerRenameAd();h.frame();assert.equal(h.messages.length,1);
 });
