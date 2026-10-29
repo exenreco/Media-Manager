@@ -431,6 +431,7 @@ pub fn ArtworkPicker(
         }
             button {class:"library-ordering-button",r#type:"button",title:"Sort posters","aria-label":"Sort posters","aria-haspopup":"dialog","aria-controls":"artwork-sort-dialog",onclick:move |_|show_sort.set(true),crate::workspace::Icon {name:"ordering"}}
         }
+        if cfg!(any(target_os = "android", target_os = "ios")) {crate::ads::NativeAdSlot {placement:"posters"}}
         if show_sort(){crate::poster::SortPopup {order:sort_order,onclose:move |_|show_sort.set(false)}}
         if loading(){crate::workspace::PageSpinner {label:"Loading posters…"}}
         if !error().is_empty(){p {class:"error",role:"alert","{error}"}}

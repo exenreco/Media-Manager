@@ -447,7 +447,7 @@ fn App() -> Element {
     rsx! {
         style { "{CSS}" }
         {update_notice}
-        if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} }
+        if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} ads::NativeAdBridge {} }
         onboarding::ConnectionIsland {notice:connection_notice,active:active_panel,onlibrary:move |_|navigate.call("preview")}
         main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(matches!(active_panel(),"preview"|"inspector"|"posters") && if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
             onpointermove: move |e| {
@@ -567,9 +567,6 @@ fn App() -> Element {
                 section { class: "panel controls left-panel", id: "library-settings", "aria-label": "Workspace details", "aria-busy":(busy() || refreshing()).to_string(),
                     if busy() || refreshing() {workspace::PageSpinner {label:if refreshing(){"Updating preview…"}else{"Working…"}}}
                     fieldset { disabled: busy() || confirming() || resume.read().is_some(),
-                        if cfg!(any(target_os = "android", target_os = "ios")) {
-                            ads::NativeAdSlot {}
-                        }
                         section { class: "settings-group naming-group",
                         h2 { if form_value.movie { "Movie Details" } else { "TV Show Details" } }
                         label { if form_value.movie { "Movie title" } else { "Series name" }
@@ -595,6 +592,9 @@ fn App() -> Element {
                         }
                         if matches!(form_value.source.as_str(),"tvmaze"|"omdb"|"custom"|"tmdb") && (!form_value.movie || form_value.source!="tvmaze") {
                             library_tools::MatchPicker {form,connection,busy,message,onselected:move |title|connection_notice.set(onboarding::Notice::MatchSelected(title))}
+                        }
+                        if cfg!(any(target_os = "android", target_os = "ios")) {
+                            ads::NativeAdSlot {placement:"details"}
                         }
                         if !form_value.movie {
                             if form_value.source == "manual" {
@@ -655,6 +655,7 @@ fn App() -> Element {
                     div {class:"library-search",workspace::Icon {name:"search"} input {r#type:"search",value:"{search}",placeholder:"Search files…","aria-label":"Search library files",oninput:move|e|search.set(e.value())}}
                         button {class:"library-ordering-button",r#type:"button",title:"Ordering settings","aria-label":"Open ordering settings","aria-haspopup":"dialog","aria-controls":"ordering-dialog",disabled:busy() || confirming() || resume.read().is_some(),onclick:move |_|show_ordering.set(true),workspace::Icon {name:"ordering"}}
                     }
+                    if cfg!(any(target_os = "android", target_os = "ios")) {ads::NativeAdSlot {placement:"library"}}
 
                     p { class: "hint",match preview_request.options.numbering {
                         tv_manager_core::Numbering::Sequence=>"Files are paired in natural filename order. Review carefully if episodes are missing.",
@@ -787,9 +788,6 @@ fn App() -> Element {
                                 a { class: "poster-credit", href: "https://www.tvmaze.com", target: "_blank", rel: "noopener noreferrer", "Artwork via TVMaze" }
                             }
                         }
-                    }
-                    if cfg!(any(target_os = "android", target_os = "ios")) {
-                        div {class:"poster-ad",ads::NativeAdSlot { posters: true }}
                     }
 
                     }

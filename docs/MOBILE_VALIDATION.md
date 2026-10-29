@@ -313,3 +313,22 @@ HEAD and seek requests. Strict workspace Clippy passed. A Windows development
 executable was built locally. These checks do not validate the user's original
 MP4, every codec/profile, physical-device playback, or paired HTTPS decoding.
 See [Media playback](PLAYBACK.md) for runtime requirements and current limits.
+
+### Android native inline preview and mobile ad placement (2026-10-28)
+
+Snapshot `ad706a0c223fb6249b8e67d3245c7d75a2c740b0` passed Android ARM64
+compilation and Android x86_64 installation/launch in
+[40788041448](https://github.com/exenreco/Media-Manager/actions/runs/40788041448).
+The emulator decoded synthetic 12-second H.264/AAC and 10-bit H.264/AAC MP4
+samples at 24 fps inline through LibVLC. Both reported native video output,
+playing and end-of-playback; no crash or ANR was detected. These tests exercise
+the private debug fixture, not a physical device, the user's original MP4 or
+paired-server playback. JavaScript tests cover slot geometry and overlay hiding.
+
+The iOS simulator package compiled, but simulator launch timed out after 180
+seconds; iOS launch acceptance remains unconfirmed for this snapshot. Windows,
+macOS and Linux checks passed in run 40788041314. Local validation passed 30
+JavaScript tests, 21 Python tests and strict app Clippy. Mobile ads now occupy
+the Details provider-ID area and the Artwork/Library search-control areas.
+Android inline playback now uses the native decoder on Android 7 and newer,
+superseding the earlier WebView-only Android 8 requirement above.
