@@ -360,11 +360,12 @@ jobs:
           project=$(find target/dx -path '*/gradle/wrapper/gradle-wrapper.properties' -print -quit)
           test -n "$project"
           project="${project%/gradle/wrapper/gradle-wrapper.properties}"
-          (cd "$project" && bash ./gradlew --no-daemon :app:bundleRelease)
+          (cd "$project" && bash ./gradlew --no-daemon :app:bundleRelease :app:assembleRelease)
           mkdir -p dist target/android-signing-tools
           apk=$(find target/dx -path '*/outputs/apk/release/*.apk' -type f | head -n 1)
           bundle=$(find target/dx -path '*/outputs/bundle/release/*.aab' -type f | head -n 1)
-          test -n "$apk" && test -n "$bundle"
+          test -n "$apk"
+          test -n "$bundle"
           cp "$apk" "dist/Media-Manager-${RELEASE_TAG#v}-android-arm64-unsigned.apk"
           cp "$bundle" "dist/Media-Manager-${RELEASE_TAG#v}-android-arm64-unsigned.aab"
           cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" target/android-signing-tools/
