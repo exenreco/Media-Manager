@@ -333,13 +333,13 @@ class MainActivity : WryActivity() {
     }
 
     override fun onResume() {
-        super.onResume(); foreground = true; billing.refresh(); positionAd(); fullscreen.state(); fullscreen.load()
+        super.onResume(); foreground = true; billing.resume(); positionAd(); fullscreen.state(); fullscreen.load()
         if (!started && bounds?.optBoolean("eligible") == true) {
             started = true; requestConsent()
         }
     }
     override fun onPause() {
-        foreground = false; mediaPreviews.pause(); adView?.visibility = View.GONE; super.onPause()
+        foreground = false; billing.pause(); mediaPreviews.pause(); adView?.visibility = View.GONE; super.onPause()
     }
     override fun onDestroy() {
         dead = true; billing.close(); fullscreen.close(); discardAd(); mediaPreviews.clear(); storage.close(); browser = null; super.onDestroy()
@@ -682,29 +682,110 @@ private class AdRemovalBilling(
     private var pending = false
     private var price = ""
     private var message = ""
-    private var epoch = 0
-    private var acknowledgements = mutableSetOf<String>()
+    private var active = false
+    private var queryId = 0L
+    private val sync = PlayEntitlementSync()
+    private val poll = Runnable { if (active && !closed) refresh() }
+    private fun scheduleRefresh(delay: Long = if (pending) 15_000L else 300_000L) {
+        handler.removeCallbacks(poll)
+        if (active && !closed) handler.postDelayed(poll, delay)
+    }
+    fun resume() { active = true; refresh() }
+    fun pause() { active = false; handler.removeCallbacks(poll) }
+    private var serverChecking = false
+    private var serverRequest = 0L
+    private val verifier = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val verificationUrl = "https://www.exenreco.com/api/media-manager/play/verify"
     var owned = cachedOwnership(); private set
-    val suppressesAds: Boolean get() = owned || flow || settling || checkingOwnership
+    val suppressesAds: Boolean get() = owned || flow || settling || checkingOwnership || serverChecking
     private val configured: Boolean get() = key != null
     private fun ok(result: com.android.billingclient.api.BillingResult) = result.responseCode == com.android.billingclient.api.BillingClient.BillingResponseCode.OK
     private fun ui(block: () -> Unit) { activity.runOnUiThread { if (!closed) block() } }
 
     private fun verified(purchase: com.android.billingclient.api.Purchase): Boolean = runCatching {
         if (key == null || purchase.packageName != activity.packageName || productId !in purchase.products ||
-            purchase.purchaseState != com.android.billingclient.api.Purchase.PurchaseState.PURCHASED ||
+            purchase.purchaseState !in listOf(com.android.billingclient.api.Purchase.PurchaseState.PURCHASED,
+                com.android.billingclient.api.Purchase.PurchaseState.PENDING) ||
             purchase.purchaseToken.isBlank() || purchase.quantity != 1) return@runCatching false
         PlayPurchaseSignature.verify(key, purchase.originalJson.toByteArray(Charsets.UTF_8),
             android.util.Base64.decode(purchase.signature, android.util.Base64.DEFAULT))
     }.getOrDefault(false)
 
-    private fun cachedOwnership(): Boolean = runCatching {
-        verified(com.android.billingclient.api.Purchase(prefs.getString("receipt", "") ?: "", prefs.getString("signature", "") ?: ""))
-    }.getOrDefault(false)
+    private fun savedReceipt(): com.android.billingclient.api.Purchase? = runCatching {
+        com.android.billingclient.api.Purchase(prefs.getString("server_receipt", "") ?: "",
+            prefs.getString("server_signature", "") ?: "").takeIf { verified(it) }
+    }.getOrNull()
+
+    private fun cachedOwnership(): Boolean = savedReceipt() != null &&
+        PlayServerEntitlement.fresh(prefs.getBoolean("server_owned", false),
+            prefs.getLong("server_checked", 0), System.currentTimeMillis())
+
+    // Only this native HTTPS result grants ownership. Signed PENDING receipts
+    // remain valid transaction proofs when the Store's ownership cache is stale.
+    private fun verifyOnServer(purchase: com.android.billingclient.api.Purchase, restore: Boolean = false) {
+        val request = ++serverRequest
+        val revision = sync.revision
+        serverChecking = true
+        prefs.edit().putString("server_receipt", purchase.originalJson)
+            .putString("server_signature", purchase.signature).apply()
+        message = "Verifying purchase securely�"; state()
+        verifier.execute {
+            val result = runCatching {
+                val connection = java.net.URL(verificationUrl).openConnection() as javax.net.ssl.HttpsURLConnection
+                try {
+                    connection.requestMethod = "POST"
+                    connection.instanceFollowRedirects = false
+                    connection.connectTimeout = 15_000; connection.readTimeout = 40_000
+                    connection.doOutput = true
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    connection.setRequestProperty("Accept", "application/json")
+                    val body = JSONObject().put("receipt", purchase.originalJson).put("signature", purchase.signature).toString().toByteArray(Charsets.UTF_8)
+                    check(body.size <= 24000)
+                    connection.setFixedLengthStreamingMode(body.size)
+                    connection.outputStream.use { it.write(body) }
+                    check(connection.responseCode == 200)
+                    val bytes = connection.inputStream.use { input ->
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(1024)
+                        while (output.size() <= 8192) {
+                            val count = input.read(buffer, 0, minOf(buffer.size, 8193 - output.size()))
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray()
+                    }
+                    check(bytes.size <= 8192)
+                    val data = JSONObject(String(bytes, Charsets.UTF_8))
+                    check(data.get("owned") is Boolean && data.get("acknowledged") is Boolean)
+                    PlayServerEntitlement.parse(data.getBoolean("owned"), data.getString("state"), data.getBoolean("acknowledged"))
+                } finally { connection.disconnect() }
+            }.getOrNull()
+            ui {
+                if (request != serverRequest) return@ui
+                serverChecking = false; checkingOwnership = false; settling = false
+                if (!sync.acceptsQuery(revision)) { state(); scheduleRefresh(5_000); return@ui }
+                if (result != null) {
+                    owned = result.owned; pending = result.pending
+                    prefs.edit().putBoolean("server_owned", owned).putLong("server_checked", System.currentTimeMillis())
+                        .remove("receipt").remove("signature").apply()
+                    message = when {
+                        owned -> "Ads removed. Thank you for supporting Media Manager."
+                        pending -> "Payment pending. Ads will be removed after Google Play confirms payment."
+                        restore -> "No active Remove ads purchase was found."
+                        else -> "Pay once to remove all ads on Android. No subscription."
+                    }
+                } else {
+                    owned = cachedOwnership()
+                    message = "Could not reach purchase verification. Previously verified ad removal is kept for up to 24 hours. Retrying automatically."
+                }
+                changed(); state(); scheduleRefresh(if (result == null || pending) 15_000 else 300_000)
+            }
+        }
+    }
 
     fun state() {
         if (closed) return
-        publish(JSONObject().put("supported", true).put("owned", owned).put("busy", connecting || querying || pricing || flow || settling)
+        publish(JSONObject().put("supported", true).put("owned", owned).put("busy", connecting || querying || serverChecking || pricing || flow || settling)
             .put("presenting", flow || settling || checkingOwnership).put("pending", pending).put("price", price)
             .put("available", configured && client.isReady && price.isNotEmpty() && !pending)
             .put("message", if (!configured) "Purchases are not available in this build yet." else message))
@@ -717,59 +798,63 @@ private class AdRemovalBilling(
             override fun onBillingSetupFinished(result: com.android.billingclient.api.BillingResult) = ui {
                 connecting = false
                 if (ok(result)) { refresh(); queryPrice() }
-                else { checkingOwnership = false; settling = false; changed(); message = "Google Play billing is unavailable. Check your connection and try Restore purchases."; state() }
+                else {
+                    checkingOwnership = false; settling = false
+                    val saved = savedReceipt()
+                    if (saved != null) verifyOnServer(saved)
+                    else { changed(); message = "Google Play billing is unavailable. Check your connection and try Restore purchases."; state(); scheduleRefresh(30_000) }
+                }
             }
             override fun onBillingServiceDisconnected() = ui {
-                connecting = false; price = ""; state()
+                connecting = false; price = ""; state(); scheduleRefresh(5_000)
             }
         })
     }
 
     fun refresh(restore: Boolean = false) {
         if (closed || !configured) { state(); return }
+        owned = cachedOwnership()
         if (!client.isReady) { connect(); return }
-        if (querying || flow) { state(); return }
+        if (querying || serverChecking || flow) { state(); return }
+        val request = ++queryId
+        val revision = sync.revision
         querying = true; message = if (restore) "Restoring purchases…" else "Checking Google Play purchases…"; state()
+        handler.postDelayed({
+            if (!closed && querying && request == queryId) {
+                ++queryId; querying = false; checkingOwnership = false; settling = false
+                message = "Google Play is taking longer than expected. Retrying automatically."
+                changed(); state(); scheduleRefresh(15_000)
+            }
+        }, 30_000)
         client.queryPurchasesAsync(com.android.billingclient.api.QueryPurchasesParams.newBuilder()
             .setProductType(com.android.billingclient.api.BillingClient.ProductType.INAPP).build()) { result, purchases -> ui {
+            if (request != queryId) return@ui
             querying = false
             checkingOwnership = false
             settling = false
+            if (!sync.acceptsQuery(revision)) {
+                state(); scheduleRefresh(15_000); return@ui
+            }
             if (ok(result)) {
-                epoch++
-                val purchase = purchases.firstOrNull { verified(it) }
-                pending = purchases.any { productId in it.products && it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PENDING }
-                owned = purchase != null
+                val purchase = purchases.firstOrNull { verified(it) } ?: savedReceipt()
                 if (purchase != null) {
-                    prefs.edit().putString("receipt", purchase.originalJson).putString("signature", purchase.signature).apply()
-                    message = "Ads removed. Thank you for supporting Media Manager."
-                    acknowledge(purchase, epoch)
+                    verifyOnServer(purchase, restore)
                 } else {
-                    prefs.edit().remove("receipt").remove("signature").apply()
-                    message = when {
-                        pending -> "Payment pending. Ads will be removed after Google Play confirms payment."
-                        purchases.any { productId in it.products && it.purchaseState == com.android.billingclient.api.Purchase.PurchaseState.PURCHASED } -> "The purchase could not be verified. Contact support."
-                        restore -> "No Remove ads purchase was found for this Google Play account."
-                        else -> "Pay once to remove all ads on Android. No subscription."
-                    }
+                    owned = false; pending = false
+                    prefs.edit().putBoolean("server_owned", false).remove("server_checked")
+                        .remove("receipt").remove("signature").apply()
+                    message = if (restore) "No Remove ads purchase was found for this Google Play account."
+                        else "Pay once to remove all ads on Android. No subscription."
                 }
-            } else message = "Could not check purchases. Previously verified ad removal is kept. Try Restore purchases when online."
+            } else {
+                val saved = savedReceipt()
+                if (saved != null) verifyOnServer(saved, restore)
+                else message = "Could not check purchases. Try Restore purchases when online."
+            }
             changed()
             state()
+            scheduleRefresh(if (ok(result)) { if (pending) 15_000L else 300_000L } else 30_000L)
             if (price.isEmpty()) queryPrice()
-        } }
-    }
-
-    private fun acknowledge(purchase: com.android.billingclient.api.Purchase, version: Int, attempt: Int = 0) {
-        if (closed || purchase.isAcknowledged || !acknowledgements.add(purchase.purchaseToken)) return
-        client.acknowledgePurchase(com.android.billingclient.api.AcknowledgePurchaseParams.newBuilder()
-            .setPurchaseToken(purchase.purchaseToken).build()) { result -> ui {
-            acknowledgements.remove(purchase.purchaseToken)
-            if (version != epoch) return@ui
-            if (!ok(result)) {
-                message = "Ads removed. Keep Google Play connected to finish confirming your purchase."; state()
-                if (attempt < 2) handler.postDelayed({ if (!closed && version == epoch) acknowledge(purchase, version, attempt + 1) }, 10_000)
-            }
         } }
     }
 
@@ -791,7 +876,7 @@ private class AdRemovalBilling(
     }
 
     fun buy() {
-        if (closed || owned || pending || flow || connecting || querying || pricing || !configured) { state(); return }
+        if (closed || owned || pending || flow || connecting || querying || serverChecking || pricing || !configured) { state(); return }
         if (!client.isReady) { connect(); return }
         if (activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus()) return
         flow = true; changed(); message = "Opening Google Play…"; state()
@@ -807,7 +892,15 @@ private class AdRemovalBilling(
     }
 
     override fun onPurchasesUpdated(result: com.android.billingclient.api.BillingResult, purchases: List<com.android.billingclient.api.Purchase>?) = ui {
-        finishPurchase(result)
+        // A purchase event is not a full ownership snapshot. Consume the signed
+        // receipt directly; a cached query must not overwrite this newer event.
+        val purchase = if (ok(result)) purchases?.firstOrNull { verified(it) } else null
+        if (purchase != null) {
+            sync.purchaseEvent()
+            flow = false; settling = true
+            verifyOnServer(purchase)
+            changed(); state()
+        } else finishPurchase(result)
     }
     private fun finishPurchase(result: com.android.billingclient.api.BillingResult) {
         flow = false
@@ -820,7 +913,29 @@ private class AdRemovalBilling(
             else -> { message = "Purchase could not be completed. Try again through Google Play."; state() }
         }
     }
-    fun close() { closed = true; handler.removeCallbacksAndMessages(null); client.endConnection() }
+    fun close() { closed = true; ++serverRequest; verifier.shutdownNow(); handler.removeCallbacksAndMessages(null); client.endConnection() }
+}
+
+/** Strict server states; malformed/transient responses never revoke ownership. */
+internal data class PlayServerEntitlement(val owned: Boolean, val pending: Boolean) {
+    companion object {
+        fun fresh(owned: Boolean, checked: Long, now: Long) = owned && checked > 0 && now >= checked && now - checked < 86_400_000L
+        fun parse(owned: Boolean, state: String, acknowledged: Boolean): PlayServerEntitlement {
+            require(state in listOf("PURCHASED", "PENDING", "CANCELLED", "NOT_OWNED"))
+            require(owned == (state == "PURCHASED"))
+            require(!owned || acknowledged)
+            return PlayServerEntitlement(owned, state == "PENDING")
+        }
+    }
+}
+
+/** Prevent a query started before a purchase event from undoing that event. */
+internal class PlayEntitlementSync {
+    var revision = 0L; private set
+    fun purchaseEvent() { revision++ }
+    fun acceptsQuery(startedAt: Long) = startedAt == revision
+    fun isPendingRegression(verifiedToken: String, queryToken: String, isPending: Boolean) =
+        verifiedToken.isNotBlank() && verifiedToken == queryToken && isPending
 }
 
 /** Fullscreen objects are single use. Entitlements never come from WebView messages. */
