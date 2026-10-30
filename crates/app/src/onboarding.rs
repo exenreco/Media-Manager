@@ -11,6 +11,10 @@ pub enum Notice {
     MatchSelected(String),
 }
 
+pub fn requires_library(target: &str) -> bool {
+    !matches!(target, "welcome" | "settings")
+}
+
 pub fn use_navigation(
     connection: Signal<Connection>,
     mut active: Signal<&'static str>,
@@ -22,8 +26,8 @@ pub fn use_navigation(
         if busy() {
             return;
         }
-        if target == "welcome" {
-            active.set("welcome");
+        if !requires_library(target) {
+            active.set(target);
             notice.set(Notice::Hidden);
             return;
         }
@@ -60,6 +64,18 @@ pub fn use_navigation(
         });
     });
     (navigate, notice)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn purchase_and_restore_settings_are_available_without_a_library() {
+        assert!(!super::requires_library("settings"));
+        assert!(!super::requires_library("welcome"));
+        for page in ["naming", "preview", "posters", "health"] {
+            assert!(super::requires_library(page));
+        }
+    }
 }
 
 #[component]
