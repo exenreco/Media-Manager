@@ -42,7 +42,7 @@ profiles, and single-use QR pairing with a remote server. See
 
 ## Platform status and downloads
 
-Version **1.0.0** is the stable source release. Platform packaging and device
+Version **1.0.1** is the current source release. Platform packaging and device
 limitations remain listed below; a stable version does not replace device testing.
 
 | Platform | Release artifact | Current limits |
@@ -50,7 +50,7 @@ limitations remain listed below; a stable version does not replace device testin
 | Windows x64 | Setup EXE and portable ZIP | Setup installs WebView2 if missing; publisher signing depends on release configuration |
 | macOS Apple Silicon / Intel | PKG installer and portable ZIP | Ad-hoc signed app; installer is not Developer ID signed or notarized |
 | Linux x64 | DEB, Flatpak with managed runtime, or TAR.GZ | DEB targets Ubuntu 24.04+ compatible systems; Flatpak supplies GTK/WebKitGTK |
-| Android ARM64 | Release-signed APK and Play upload AAB | Release APK uses production ads; ad removal requires Play product/key configuration; physical-device acceptance pending |
+| Android ARM64 | Release-signed APK and Play upload AAB | Release APK uses production ads; server-verified ad removal; physical-device acceptance pending |
 | iOS ARM64 Simulator | Simulator app ZIP | For Xcode Simulator, not an installable iPhone IPA; device signing remains pending |
 
 The tag-triggered [release workflow](.github/workflows/release.yml) builds each
@@ -62,7 +62,7 @@ iOS security-scoped folder selection for local previews, renaming, posters and
 playback. Both mobile integrations have compiled in native CI; device/provider
 validation is still pending. Mobile background jobs and notifications remain unfinished.
 
-Download [Media Manager 1.0.0](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.0).
+Download [Media Manager 1.0.1](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.1).
 
 The beta release includes Windows setup, macOS PKG and Linux DEB installers
 alongside portable downloads and the managed Linux Flatpak. See [desktop installation](docs/INSTALLATION.md)
@@ -144,7 +144,7 @@ release AAB targeting API 36, retains native Rust symbols, and exports a matchin
 `native-debug-symbols.zip`. Sign privately with
 [scripts/sign_android_bundle.ps1](scripts/sign_android_bundle.ps1); never publish
 upload keys or passwords. See [Android release builds](docs/ANDROID_RELEASE.md).
-The existing Play upload uses version code 1000004; the 1.0.0 build uses 1000006.
+The 1.0.1 Play upload uses version code 1000009. Pending approval, restore, refund/revocation and decline passed live emulator testing with the configured purchase service; see [Android billing validation](docs/ANDROID_BILLING.md).
 
 Android compatibility playback uses bundled LibVLC; iOS uses VLCKit. Desktop and
 paired compatibility conversion needs FFmpeg installed on the library host.

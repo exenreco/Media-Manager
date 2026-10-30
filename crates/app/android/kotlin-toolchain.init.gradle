@@ -30,8 +30,8 @@ gradle.beforeProject { project ->
         }
         if (System.getenv('MEDIA_MANAGER_PLAY_BUNDLE') == 'true') {
           project.extensions.getByName('androidComponents').finalizeDsl { androidDsl ->
-            androidDsl.defaultConfig.versionCode = (System.getenv('MEDIA_MANAGER_VERSION_CODE') ?: '1000006').toInteger()
-            androidDsl.defaultConfig.versionName = '1.0.0'
+            androidDsl.defaultConfig.versionCode = (System.getenv('MEDIA_MANAGER_VERSION_CODE') ?: '1000009').toInteger()
+            androidDsl.defaultConfig.versionName = '1.0.1'
             androidDsl.defaultConfig.ndk.abiFilters.clear()
             androidDsl.defaultConfig.ndk.abiFilters.add('arm64-v8a')
             androidDsl.buildTypes.getByName('release').signingConfig = null

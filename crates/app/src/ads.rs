@@ -62,15 +62,17 @@ pub fn NativeAdSlot(placement: &'static str) -> Element {
 pub fn AdPreferences() -> Element {
     rsx! {
         section {class:"settings-group",
+            hr {class:"advertising-divider"}
             h2 {"Advertising"}
             if cfg!(target_os = "android") {
                 p {class:"hint","Remove all ads on Android with a one-time Google Play purchase. Restore on other Android devices using the same Google Play account."}
-                div {class:"button-row",
+                div {class:"button-row billing-actions",
                     button {r#type:"button",class:"primary billing-buy",disabled:true,"Remove ads"}
                     button {r#type:"button",class:"secondary billing-restore",disabled:true,"Restore purchases"}
                 }
                 p {class:"hint billing-status",role:"status","Checking Google Play…"}
             }
+            hr {class:"advertising-divider"}
             p {class:"hint","Watch an optional rewarded ad to hide all ads on this device for 30 minutes. Closing before earning the reward does not activate the benefit."}
             button {r#type:"button",class:"secondary ad-rewarded","Watch an ad — 30 minutes without ads"}
             p {class:"hint fullscreen-ad-status",role:"status","Checking ad availability…"}

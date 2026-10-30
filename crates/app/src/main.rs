@@ -203,7 +203,7 @@ fn App() -> Element {
     let mut left_width = use_signal(|| 340.0f64);
     let mut right_width = use_signal(|| 300.0f64);
     let mut active_panel = use_signal(|| "welcome");
-    let workspace_open = use_memo(move || active_panel() != "welcome");
+    let workspace_open = use_memo(move || onboarding::requires_library(active_panel()));
     let (navigate, mut connection_notice) =
         onboarding::use_navigation(connection, active_panel, busy);
     let mut drag = use_signal(|| None::<PanelDrag>);

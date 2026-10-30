@@ -1,6 +1,6 @@
 # Android: one-time ad removal
 
-The same Android app supports free and paid users. Settings → Advertising offers
+The same Android app supports free and paid users. Settings > Advertising offers
 **Remove ads** with the localized Google Play price and **Restore purchases**.
 This is a non-consumable purchase: never consume it. A purchase removes native,
 interstitial and rewarded ads on Android. It does not unlock iOS or desktop
@@ -89,14 +89,230 @@ References: [Billing integration](https://developer.android.com/google/play/bill
 [Billing security](https://developer.android.com/google/play/billing/security),
 [Billing testing](https://developer.android.com/google/play/billing/test).
 
-## Current validation
+## Current validation — October 29, 2026
 
-Snapshot `d5ccd25efd25f486263a5bb34826b6e92ecc51b6` passed Android ARM64 and
-x86_64 builds, native RSA receipt-signature tests, emulator installation/launch
-and both inline H.264 playback fixtures in
-[40824586252](https://github.com/exenreco/Media-Manager/actions/runs/40824586252).
-All 35 JavaScript tests passed. Windows, macOS and Linux regression checks passed
-in [40824573993](https://github.com/exenreco/Media-Manager/actions/runs/40824573993).
-The public key and Play product were not configured, so no real purchase,
-pending-payment, acknowledgement, restore or refund transaction was exercised.
-Those require the internal-track acceptance checks above. No release was published.
+- Product `remove_ads` is active at USD 5.99, with one `standard` Buy option,
+  Google-generated regional prices, and multi-quantity disabled.
+- Repository variables `PLAY_BILLING_PUBLIC_KEY` (RSA-2048 public key) and
+  `AD_FREE_PRODUCT_ID=remove_ads` are configured. The existing Media Manager
+  Internal Testers list is enabled for license testing with `RESPOND_NORMALLY`.
+- Android version name **1.0.0**, version code **1000008**, includes the configured
+  key and the fix allowing Settings, purchase and restore before connecting a
+  library. Settings does not start library scans or provider requests.
+- [Play release build 40926073208](https://github.com/exenreco/Media-Manager/actions/runs/40926073208)
+  passed key validation, generated release configuration checks, bridge tests,
+  native receipt tests, bundle and APK packaging, ABI/alignment checks and symbol
+  export. APK and AAB were signed locally with the existing upload identity and
+  their embedded public key was verified.
+- [Android validation 40926078786](https://github.com/exenreco/Media-Manager/actions/runs/40926078786)
+  passed ARM64 and x86_64 builds, native receipt tests, emulator launch and H.264
+  8-bit/10-bit inline playback. The navigation-policy regression test passed
+  locally; formatting and diff checks passed.
+
+### Live Google Play license-test results
+
+Tested in the API 35 Google Play emulator using the x86_64 debug APK from the
+same source revision as the signed release packages:
+
+| Check | Result |
+| --- | --- |
+| Settings opens without a media folder | Passed |
+| Product lookup and localized USD 5.99 price | Passed |
+| Checkout uses Test card, always approves, with no charge | Passed |
+| Cancel checkout leaves the app unowned | Passed |
+| Successful test purchase displays Ads removed | Passed |
+| Receipt verifies against the configured Google Play RSA public key | Passed |
+| Package/product, PURCHASED state and quantity 1 | Passed |
+| Google Play acknowledgement after purchase refresh | Passed |
+| Clear only test-app data: cached receipt absent | Passed |
+| Fresh launch restores signed, acknowledged entitlement from Play | Passed |
+| Restore purchases button retains verified ad-free ownership | Passed |
+
+The test receipt and purchase token were not exported or logged. Local evidence
+contains screenshots and validation flags only under `dist/play-billing/live-tests`.
+The signed packages and matching native symbols are under
+`dist/play-billing/1000008`. The new bundle is an **internal testing** release;
+this does not publish the app to production.
+
+### Refund and pending-payment follow-up
+
+All transactions used no-charge license-test instruments on the same emulator
+and sideloaded debug build, rather than a Play-installed signed release.
+
+| Check | Observed result |
+| --- | --- |
+| Refund and revoke | Console confirmed Refunded. App retained cached ownership through Restore and restarts; an approved Store data reset restored unowned status with no receipt. Automatic revocation did not pass. |
+| Slow decline | No paid entitlement while pending, including after app restart. Console confirmed Canceled. App remained pending until an approved Store data reset. Automatic cancellation reconciliation did not pass. |
+| Slow approval | No entitlement while pending. Console then confirmed Processed, but Restore and a Store process restart still returned pending with no verified receipt. Final delivery and acknowledgement remain unresolved. |
+
+Evidence under `dist/play-billing/live-tests` includes
+`pending-test-final-orders.png`, `test-order-refunded.png`,
+`slow-decline-pending-after-restart.jpg`, `slow-decline-final-unowned.jpg`,
+`slow-approve-checkout.jpg`, `slow-approve-pending-unowned.jpg` and
+`slow-approve-processed-client-still-pending.jpg`. No raw receipts or tokens
+were exported.
+
+**Release limitation:** withholding entitlement before payment passed, but timely
+synchronization did not. Refund and pending acceptance are not fully passed.
+Investigate Play caching and repeat on a physical device with the Play-installed
+release. The client-only verifier cannot independently establish current server
+ownership when Play returns stale signed purchases. Backend purchase verification
+and real-time developer notifications would provide stronger reconciliation.
+Store data resets are a test workaround, not an acceptable user recovery flow.
+
+Connectivity loss during acknowledgement, offline restart and physical-device
+Play-installed release checks also remain outstanding.
+
+### Synchronization correction (awaiting live payment validation)
+
+The Android listener now processes verified receipts from `onPurchasesUpdated`
+directly instead of discarding them and relying exclusively on another ownership
+query. An in-flight query started before that event cannot undo it. A stale
+PENDING receipt for the identical token cannot regress a previously verified
+PURCHASED receipt; an empty successful ownership query still revokes ownership.
+
+While the activity is foregrounded, pending ownership refreshes every 15 seconds,
+and settled ownership refreshes every five minutes. Resume and Restore refresh
+immediately. Transient failures retry, and a stalled query releases its busy state
+after 30 seconds so Restore cannot remain locked indefinitely. Pausing or closing
+the activity stops polling. Successful acknowledgement schedules a receipt refresh.
+These changes do not bypass signature verification or grant pending payments.
+
+Native regression tests cover stale-query ordering and same-token pending
+regression. The previous live-test results above describe the old build and are
+not proof that this correction passed live billing tests. Client polling cannot
+force Google Play to invalidate its cache; independent refund reconciliation
+still requires an authenticated server-side Google Play Developer API integration.
+
+The 28 local billing/advertising bridge tests passed. Both Android architectures
+compiled, and the native receipt/signature and synchronization tests passed in
+[validation run 40956901227](https://github.com/exenreco/Media-Manager/actions/runs/40956901227).
+The CI emulator launch and H.264 8-bit/10-bit inline playback checks also passed.
+The verified x86_64 APK is saved locally at
+`dist/play-billing/sync-fix-emulator/Media-Manager-emulator.apk`. A data-preserving
+update was rejected because the CI debug signing identity differs. After explicit
+user approval, the test app was replaced and successfully launched. Play Store
+data and the Google account were preserved. Settings loaded the localized offer,
+but Play still returned the previous pending transaction with no verified paid
+receipt, even with fresh Media Manager app data. This is not a live payment pass;
+the stale Store transaction remains unresolved pending independent verification.
+Evidence: `dist/play-billing/sync-fix-emulator/local-billing-still-pending.jpg`.
+
+### Requirements for independent server reconciliation
+
+A Play Console developer account alone does not host a verification service.
+The CMS now hosts the verification endpoint described below. The original setup
+requirements are retained here for other deployments:
+
+1. Create or select a Google Cloud project and enable the Google Play Developer API.
+2. Create a dedicated server identity. Grant it access only to Media Manager in
+   Play Console, with the purchase permissions required by the API. Prefer an
+   attached service account on the hosting platform over exporting a JSON key.
+3. Host an HTTPS verifier that validates the app/product and checks purchase
+   state with Google. Only PURCHASED grants ownership; pending, canceled and
+   revoked purchases do not. Acknowledgement must be idempotent.
+4. Authenticate requests and bind verified purchases to the entitlement model;
+   apply rate limits and redact receipts, tokens and credentials from logs.
+   Never trust a client-supplied ownership flag or ship service credentials in an APK.
+5. Configure authenticated real-time developer notifications, verify their
+   identity, and query Google for current purchase state after each notification.
+   Notifications alone are not proof of ownership. Deduplicate events and handle
+   out-of-order delivery.
+6. Add the HTTPS integration to Android and repeat approve, decline, refund,
+   restore and offline tests before promoting the build.
+
+Cloud project `portfolio-457414` has the Google Play Android Developer API enabled.
+With explicit owner approval, the keyless service account
+`media-manager-play-verifier@portfolio-457414.iam.gserviceaccount.com` was created
+without project-wide IAM roles or downloaded keys. Console confirmed Enabled and
+No keys. Evidence: `dist/play-billing/cloud-setup/service-account-created.png`.
+With explicit owner approval, Play Console access was granted only for
+`com.tvshowmanager.app`: View app information (read-only), its included app-quality
+read access, View financial data, and Manage orders and subscriptions. Console
+confirmed the verifier account Active, with no access expiry. No account-wide,
+admin, store-editing or release permissions were selected. The financial/order
+permissions include viewing sales data, issuing refunds and canceling subscriptions.
+Evidence: `dist/play-billing/cloud-setup/play-verifier-access-active.png`.
+### Live CMS verifier and Android integration (2026-10-30)
+
+The Colossal CMS plugin is deployed and enabled at
+`https://www.exenreco.com/api/media-manager/play/verify`. Its three configuration
+fields are encrypted in the database. Google workload identity federation accepts
+only `owner:exenreco:project:portfolio:environment:production` from issuer
+`https://oidc.vercel.com/exenreco`, audience `https://vercel.com/exenreco`.
+The provider resource is
+`//iam.googleapis.com/projects/239570955445/locations/global/workloadIdentityPools/media-manager-production/providers/vercel-production`.
+Only that subject can impersonate the verifier service account. No Google private
+key was created or downloaded, and no Cloud billing upgrade was performed.
+
+Authenticated real-time notifications are configured for all one-time products:
+
+- Topic: `projects/portfolio-457414/topics/media-manager-play`.
+- Subscription: `projects/portfolio-457414/subscriptions/media-manager-play-push`.
+- Push identity: `media-manager-play-push@portfolio-457414.iam.gserviceaccount.com`.
+- Endpoint and JWT audience: `https://www.exenreco.com/api/media-manager/play/notifications`.
+- Google Play has Publisher access on that topic only. Pub/Sub has Token Creator
+  access on the dedicated push account only; that account has no Play permissions.
+- The subscription retains unacknowledged messages for seven days, uses exponential
+  retry, a 60-second acknowledgement deadline, and does not expire from inactivity.
+
+A Play Console test notification reached the production endpoint with HTTP 200.
+The endpoint verifies Google's signature, exact audience/email/subscription and
+package before acknowledging. Evidence:
+`dist/play-billing/cloud-setup/authenticated-notification-200.png`.
+This test validates delivery/authentication, not purchase-state lookup.
+
+Android native billing now posts the exact signed transaction to the fixed HTTPS
+endpoint on purchase, restore and foreground refresh. Both PURCHASED and PENDING
+signed receipts prove a transaction; only a server-confirmed PURCHASED and
+acknowledged result grants ad removal. The server checks current Google state and
+acknowledges non-consumable purchases, without consuming them. Receipt/signature
+never pass through the WebView or logs. Redirects are rejected and network work
+runs outside the UI thread with bounded timeouts and response size.
+
+The server entitlement is stored separately from the Google-signed receipt and
+bound to the exact purchase token. This supports a server-confirmed payment even
+while Play returns an older signed pending receipt. Cached proof is rechecked
+when the Store returns empty or fails, allowing independent refund reconciliation.
+Transient network/server/rate-limit errors preserve previously confirmed ownership
+for at most 24 hours; they do not grant new ownership. Pending payments refresh at
+15 seconds while foregrounded, settled state at five minutes, and resume/Restore
+check immediately. Old in-flight results cannot overwrite newer purchase events.
+
+The Android integration was built at commit `6149f5ca6bd2772ac696f5fc3803a3e0804cc81d`
+([validation run 41016740431](https://github.com/exenreco/Media-Manager/actions/runs/41016740431)).
+Both architectures compiled and native billing tests passed. The first emulator
+attempt launched successfully but its H.264 playback completion check failed;
+the failed job was repeated once and passed app launch plus H.264 8-bit and
+10-bit playback checks. The validation run finished successfully. The installed
+x86_64 APK (same source revision) is saved at
+`dist/play-billing/server-integration/41016740431/Media-Manager-emulator.apk`.
+The ARM64 test APK and SHA-256 files are saved in the same folder.
+
+Live validation on the licensed Play test emulator:
+
+| Case | Result |
+| --- | --- |
+| Unsigned purchase / notification request | Both rejected with HTTP 401. |
+| Authenticated Play test and real purchase notifications | Test, real purchase and refund events delivered with HTTP 200; purchase at 07:12:33 UTC and refund events at 07:18:35 UTC. |
+| Stale local pending receipt for an old canceled transaction | Google returned CANCELLED, Android cleared pending and Restore reported no active purchase; Store data was not reset. |
+| New slow-approval test payment | Google and Android initially PENDING, owned false, acknowledged false. |
+| Completion of the slow-approval payment | Android automatically displayed Ads removed; Google returned PURCHASED, owned true, acknowledged true, while the exact local signed receipt still said pending (4). |
+| Restore of the completed payment | Retained Ads removed using fresh server verification. |
+| Full test refund with entitlement removal | Console confirmed Refunded; Android automatically removed ad-free access at its foreground refresh, Google returned CANCELLED and owned false despite the signed local receipt remaining pending. No Store data reset. |
+| Slow decline | Initially PENDING, owned false and acknowledged false; Android automatically cleared pending after Google returned CANCELLED. Ad removal was never granted. No Store data reset. |
+
+Evidence with no receipt/token contents is saved under
+`dist/play-billing/server-integration/live-tests/`. All checkouts used licensed test
+payment methods; no real payment was charged. The production adapter originally
+looked for a build environment token, which is absent in Vercel Functions. The fix
+in Colossal CMS commit `dfa00df` uses the platform's request-scoped OIDC header,
+strips it before forwarding to authentication/plugins, and leaves the shared warm
+runtime unchanged. Its full 385-test server suite passed before deployment.
+
+Physical-device and Play-installed release checks remain separate validation.
+The older test results above are historical, not results from this integration.
+
+Official setup: [Google Play Developer API](https://developers.google.com/android-publisher/getting_started),
+[purchase security](https://developer.android.com/google/play/billing/security),
+[real-time notifications](https://developer.android.com/google/play/billing/rtdn-reference).

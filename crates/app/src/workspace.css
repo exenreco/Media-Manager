@@ -138,6 +138,8 @@ main[data-view=health] .layout>.center-column,main[data-view=health] .layout>.ri
 .layout>.left-panel{position:relative}
 
 .provider-alternatives-divider{width:100%;border:0;border-top:1px solid #343b36;margin:12px 0 22px}.poster-inspector>label{margin:16px 0 8px}
+.advertising-divider{width:100%;border:0;border-top:1px solid var(--line);margin:24px 0}
+.billing-actions{display:flex;flex-wrap:wrap;gap:12px}
 
 .artwork-search-tools{margin-top:0}.artwork-sort-dialog{width:min(390px,calc(100vw - 32px))}.artwork-sort-dialog h2{font-size:20px;margin:0 36px 24px 0}.poster-sort-options{display:grid;gap:16px}.poster-sort-options label{margin:0;font-size:12px;cursor:pointer}
 

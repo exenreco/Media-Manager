@@ -3,6 +3,7 @@
   window.mediaManagerBillingCleanup?.();
   let stopped = false, initialized = false, timer, bridge;
   let state = {owned:false, busy:true, pending:false, available:false, price:'', message:'Checking Google Play…'};
+  const restoreExpired = () => state.restoreUntil > 0 && Date.now() >= state.restoreUntil;
   const send = type => bridge?.postMessage(JSON.stringify({type}));
   const render = () => {
     window.mediaManagerPermanentAdFree = !!state.owned;
@@ -12,14 +13,14 @@
       button.disabled = state.owned || state.busy || state.pending || !state.available;
       button.textContent = state.owned ? 'Ads removed' : state.pending ? 'Payment pending' : state.price ? `Remove ads — ${state.price}` : 'Remove ads';
     });
-    document.querySelectorAll('.billing-restore').forEach(button => { button.disabled = !bridge || state.busy; });
+    document.querySelectorAll('.billing-restore').forEach(button => { button.disabled = !bridge || state.busy || restoreExpired(); button.title = restoreExpired() ? 'The 24-hour restore window has ended. Purchase status still updates automatically.' : ''; });
     document.querySelectorAll('.billing-status').forEach(label => { label.textContent = state.message || (state.owned ? 'All ads removed on Android.' : 'One-time purchase. No subscription.'); });
   };
   window.mediaManagerBillingState = value => { state = value; render(); };
   const click = event => {
     if (document.hidden || state.busy || document.querySelector('dialog[open], .overlay') || window.mediaManagerNativePlaybackActive) return;
     if (event.target.closest('.billing-buy') && !state.owned && !state.pending && state.available) send('billing-buy');
-    if (event.target.closest('.billing-restore')) send('billing-restore');
+    if (event.target.closest('.billing-restore') && !restoreExpired()) send('billing-restore');
   };
   const resume = () => { if (!document.hidden) send('billing-state'); };
   const tick = () => {

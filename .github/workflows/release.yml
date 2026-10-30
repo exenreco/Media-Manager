@@ -310,7 +310,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MEDIA_MANAGER_PLAY_BUNDLE: 'true'
-      MEDIA_MANAGER_VERSION_CODE: '1000006'
+      MEDIA_MANAGER_VERSION_CODE: '1000009'
       CARGO_PROFILE_RELEASE_DEBUG: '1'
       CARGO_PROFILE_RELEASE_STRIP: 'none'
       RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'

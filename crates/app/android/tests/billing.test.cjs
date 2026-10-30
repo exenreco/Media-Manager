@@ -43,3 +43,12 @@ test('resume queries native ownership; cleanup releases callbacks and listeners'
   h.window.mediaManagerBillingCleanup();assert.equal(h.listeners.size,0);assert.equal(h.window.mediaManagerBillingState,undefined);
   const count=h.messages.length;h.tick();assert.equal(h.messages.length,count);
 });
+test('restore remains visible but is disabled after the payment window without removing ownership',()=>{
+  const h=harness();
+  h.window.mediaManagerBillingState({...available,owned:true,restoreUntil:Date.now()+86400000});
+  assert.equal(h.restore.disabled,false);
+  h.window.mediaManagerBillingState({...available,owned:true,restoreUntil:Date.now()-1});
+  assert.equal(h.restore.disabled,true);
+  assert.equal(h.window.mediaManagerPermanentAdFree,true);
+  const count=h.messages.length;h.click('.billing-restore');assert.equal(h.messages.length,count);
+});
