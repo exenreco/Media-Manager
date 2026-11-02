@@ -4,14 +4,14 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const script = fs.readFileSync(path.join(__dirname, '../../src/billing.js'), 'utf8');
-function harness() {
+function harness(now = Date.now()) {
   const messages=[], listeners=new Map(), buy={}, restore={}, label={}; let tick, modal=false, refreshes=0;
   const window={MediaManagerAds:{postMessage:data=>messages.push(JSON.parse(data))},mediaManagerFullscreenRefresh:()=>refreshes++};
   const document={hidden:false,querySelector:()=>modal?{}:null,
     querySelectorAll:selector=>selector==='.billing-buy'?[buy]:selector==='.billing-restore'?[restore]:selector==='.billing-status'?[label]:[],
     addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:name=>listeners.delete(name)};
-  vm.runInNewContext(script,{window,document,setTimeout:fn=>{tick=fn;return 1},clearTimeout:()=>{tick=null}});
-  return {window,document,messages,buy,restore,label,listeners,tick:()=>tick?.(),modal:value=>modal=value,
+  vm.runInNewContext(script,{window,document,Date:{now:()=>now},setTimeout:fn=>{tick=fn;return 1},clearTimeout:()=>{tick=null}});
+  return {advance:ms=>{now+=ms;tick?.();},window,document,messages,buy,restore,label,listeners,tick:()=>tick?.(),modal:value=>modal=value,
     click:selector=>listeners.get('click')({target:{closest:s=>s===selector?{}:null}})};
 }
 const available={owned:false,busy:false,pending:false,available:true,price:'$3.99',message:''};
@@ -44,10 +44,11 @@ test('resume queries native ownership; cleanup releases callbacks and listeners'
   const count=h.messages.length;h.tick();assert.equal(h.messages.length,count);
 });
 test('restore remains visible but is disabled after the payment window without removing ownership',()=>{
-  const h=harness();
-  h.window.mediaManagerBillingState({...available,owned:true,restoreUntil:Date.now()+86400000});
+  const now=Date.now(),h=harness(now);
+  h.window.mediaManagerBillingState({...available,owned:true,restoreUntil:now+600000});
   assert.equal(h.restore.disabled,false);
-  h.window.mediaManagerBillingState({...available,owned:true,restoreUntil:Date.now()-1});
+  h.advance(599999);assert.equal(h.restore.disabled,false);
+  h.advance(1);
   assert.equal(h.restore.disabled,true);
   assert.equal(h.window.mediaManagerPermanentAdFree,true);
   const count=h.messages.length;h.click('.billing-restore');assert.equal(h.messages.length,count);

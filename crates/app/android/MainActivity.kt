@@ -771,7 +771,8 @@ private class AdRemovalBilling(
                     owned = result.owned; pending = result.pending
                     if (owned && prefs.getString("restore_payment_token", "") != purchase.purchaseToken) {
                         prefs.edit().putString("restore_payment_token", purchase.purchaseToken)
-                            .putLong("restore_until", System.currentTimeMillis() + 86_400_000L).apply()
+                            .putLong("restore_until", System.currentTimeMillis() + 600_000L)
+                            .putBoolean("restore_ten_minute_window", true).apply()
                     }
                     prefs.edit().putBoolean("server_owned", owned).putString("server_owned_token", purchase.purchaseToken).putLong("server_checked", System.currentTimeMillis())
                         .remove("receipt").remove("signature").apply()
@@ -790,10 +791,19 @@ private class AdRemovalBilling(
         }
     }
 
+    private fun restoreDeadline(): Long {
+        val deadline = prefs.getLong("restore_until", 0)
+        if (deadline <= 0 || prefs.getBoolean("restore_ten_minute_window", false)) return deadline
+        // Preserve the original confirmation time when upgrading from the 24-hour window.
+        val migrated = deadline - 86_400_000L + 600_000L
+        prefs.edit().putLong("restore_until", migrated).putBoolean("restore_ten_minute_window", true).apply()
+        return migrated
+    }
+
     fun state() {
         if (closed) return
         publish(JSONObject().put("supported", true).put("owned", owned).put("busy", connecting || querying || serverChecking || pricing || flow || settling)
-            .put("restoreUntil", prefs.getLong("restore_until", 0))
+            .put("restoreUntil", restoreDeadline())
             .put("presenting", flow || settling || checkingOwnership).put("pending", pending).put("price", price)
             .put("available", configured && client.isReady && price.isNotEmpty() && !pending)
             .put("message", if (!configured) "Purchases are not available in this build yet." else message))
@@ -820,9 +830,9 @@ private class AdRemovalBilling(
     }
 
     fun refresh(restore: Boolean = false) {
-        val restoreUntil = prefs.getLong("restore_until", 0)
+        val restoreUntil = restoreDeadline()
         if (restore && restoreUntil > 0 && System.currentTimeMillis() >= restoreUntil) {
-            message = "The 24-hour Restore purchases window has ended. Purchase status still updates automatically."
+            message = "The 10-minute Restore purchases window has ended. Purchase status still updates automatically."
             state(); return
         }
         if (closed || !configured) { state(); return }

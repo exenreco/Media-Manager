@@ -13,7 +13,7 @@
       button.disabled = state.owned || state.busy || state.pending || !state.available;
       button.textContent = state.owned ? 'Ads removed' : state.pending ? 'Payment pending' : state.price ? `Remove ads — ${state.price}` : 'Remove ads';
     });
-    document.querySelectorAll('.billing-restore').forEach(button => { button.disabled = !bridge || state.busy || restoreExpired(); button.title = restoreExpired() ? 'The 24-hour restore window has ended. Purchase status still updates automatically.' : ''; });
+    document.querySelectorAll('.billing-restore').forEach(button => { button.disabled = !bridge || state.busy || restoreExpired(); button.title = restoreExpired() ? 'The 10-minute restore window has ended. Purchase status still updates automatically.' : ''; });
     document.querySelectorAll('.billing-status').forEach(label => { label.textContent = state.message || (state.owned ? 'All ads removed on Android.' : 'One-time purchase. No subscription.'); });
   };
   window.mediaManagerBillingState = value => { state = value; render(); };
