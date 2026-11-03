@@ -60,9 +60,24 @@ class MainActivity : WryActivity() {
     private val timer = Handler(Looper.getMainLooper())
     private val expireAd = Runnable { discardAd(); collapse() }
 
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        androidx.core.view.WindowCompat.enableEdgeToEdge(window)
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+    }
+
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
         browser = webView
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { _, insets ->
+            updateSafeArea(webView, insets)
+            insets // Do not consume: native overlays and child views need insets too.
+        }
+        webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSafeArea(webView) }
+        webView.post { androidx.core.view.ViewCompat.requestApplyInsets(webView) }
         mediaPreviews.attach(webView)
         // Disposable private fixture, used only by the native playback acceptance harness.
         if(BuildConfig.DEBUG && intent.getBooleanExtra("media_manager_preview_fixture",false)) {
@@ -71,11 +86,21 @@ class MainActivity : WryActivity() {
                 if(fixture.isFile) {
                     val prepared=mediaPreviews.local(android.net.Uri.fromFile(fixture),fixture.length(),"video/mp4")
                     val source="/native-media-preview/"+prepared.getString("token")
-                    if (intent.getBooleanExtra("media_manager_inline_fixture",false)) {
-                        mediaPreviews.inline(JSONObject().put("source",source).put("visible",true)
-                            .put("x",16).put("y",160).put("width",webView.width-32)
-                            .put("height",webView.width*0.6).put("viewportWidth",webView.width),webView)
-                    } else mediaPreviews.play(source)
+                    val inline = intent.getBooleanExtra("media_manager_inline_fixture",false)
+                    fun openFixture(remaining: Int) {
+                        if (dead) return
+                        if (inline) {
+                            mediaPreviews.inline(JSONObject().put("source",source).put("visible",true)
+                                .put("x",16).put("y",160).put("width",webView.width-32)
+                                .put("height",webView.width*0.6).put("viewportWidth",webView.width),webView)
+                        } else mediaPreviews.play(source)
+                        if (remaining > 1) timer.postDelayed({
+                            mediaPreviews.dismiss()
+                            java.io.File(filesDir,"compatibility-fixture-events.txt").appendText("dismissed\n")
+                            timer.postDelayed({ openFixture(remaining - 1) }, 300)
+                        }, 2500)
+                    }
+                    openFixture(intent.getIntExtra("media_manager_preview_cycles",1).coerceIn(1,3))
                 }
             },1500)
         }
@@ -130,21 +155,25 @@ class MainActivity : WryActivity() {
         storage.result(requestCode, resultCode, data)
     }
 
-    private fun updateSafeArea(web: WebView) {
-        val insets = web.rootWindowInsets ?: return
-        val top = if (android.os.Build.VERSION.SDK_INT >= 30) {
-            insets.getInsets(android.view.WindowInsets.Type.statusBars() or android.view.WindowInsets.Type.displayCutout()).top
-        } else {
-            @Suppress("DEPRECATION")
-            val statusTop = insets.systemWindowInsetTop
-            val cutoutTop = if (android.os.Build.VERSION.SDK_INT >= 28) insets.displayCutout?.safeInsetTop ?: 0 else 0
-            maxOf(statusTop, cutoutTop)
-        }
+    internal fun updateSafeArea(web: WebView, supplied: androidx.core.view.WindowInsetsCompat? = null) {
+        if (dead || web.width == 0 || web.height == 0) return
+        val insets = supplied ?: androidx.core.view.ViewCompat.getRootWindowInsets(web) ?: return
+        val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+            androidx.core.view.WindowInsetsCompat.Type.displayCutout() or androidx.core.view.WindowInsetsCompat.Type.ime())
         val origin = IntArray(2)
         web.getLocationInWindow(origin)
-        // Count only overlap: some Android windows already inset the WebView.
-        val cssTop = maxOf(0, top - origin[1]) / resources.displayMetrics.density
-        web.evaluateJavascript("document.documentElement.style.setProperty('--native-safe-top', '${cssTop}px')", null)
+        val decor = window.decorView
+        // Subtract space already excluded by adjustResize or an inset parent.
+        val values = listOf(
+            "top" to maxOf(0, safe.top - origin[1]),
+            "left" to maxOf(0, safe.left - origin[0]),
+            "bottom" to maxOf(0, safe.bottom - (decor.height - origin[1] - web.height)),
+            "right" to maxOf(0, safe.right - (decor.width - origin[0] - web.width)))
+        val density = resources.displayMetrics.density
+        val script = values.joinToString(";") { (edge, pixels) ->
+            "document.documentElement.style.setProperty('--native-safe-$edge','${pixels / density}px')"
+        }
+        web.evaluateJavascript(script, null)
     }
 
     private fun requestConsent() {
@@ -607,8 +636,20 @@ private class LocalStorage(private val activity: MainActivity, private val media
 }
 
 
-/** Dedicated portrait QR scanner; the guide matches the decoder's square crop. */
+/** Adaptive QR scanner; the guide matches the decoder's square crop. */
 class PairingCaptureActivity : com.journeyapps.barcodescanner.CaptureActivity() {
+    override fun onCreate(state: android.os.Bundle?) {
+        super.onCreate(state)
+        androidx.core.view.WindowCompat.enableEdgeToEdge(window)
+        val content = findViewById<View>(android.R.id.content)
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(content)
+    }
     override fun initializeContent(): com.journeyapps.barcodescanner.DecoratedBarcodeView {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val scanner = com.journeyapps.barcodescanner.DecoratedBarcodeView(this)
@@ -1077,6 +1118,8 @@ private class MediaPreviews(private val activity: MainActivity) {
     private var compatible: CompatiblePreview? = null
     fun inline(command: JSONObject, web: WebView) {
         activity.runOnUiThread {
+            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+            try {
             val source = command.optString("source")
             val token = source.removePrefix("/native-media-preview/")
             if (source.isEmpty()) {
@@ -1092,7 +1135,14 @@ private class MediaPreviews(private val activity: MainActivity) {
                 compatible = CompatiblePreview(activity, token, ::response, web).also { it.show() }
             }
             compatible?.position(command)
+            } catch (error: Exception) { failed(error) }
+              catch (error: LinkageError) { failed(error) }
         }
+    }
+    private fun failed(error: Throwable) {
+        android.util.Log.e("MediaManagerPlayback", "Preview could not be opened", error)
+        runCatching { compatible?.close() }; compatible = null
+        android.widget.Toast.makeText(activity, "Could not open video preview. Please select the file again.", android.widget.Toast.LENGTH_LONG).show()
     }
     fun attach(web: WebView) {
         browser = web
@@ -1106,7 +1156,10 @@ private class MediaPreviews(private val activity: MainActivity) {
             }
             override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest) = original.shouldOverrideUrlLoading(view,request)
             override fun onPageStarted(view: WebView, url: String, icon: android.graphics.Bitmap?) = original.onPageStarted(view,url,icon)
-            override fun onPageFinished(view: WebView, url: String) = original.onPageFinished(view,url)
+            override fun onPageFinished(view: WebView, url: String) {
+                original.onPageFinished(view,url)
+                activity.updateSafeArea(view)
+            }
             override fun onPageCommitVisible(view: WebView, url: String) = original.onPageCommitVisible(view,url)
             override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) = original.onReceivedError(view,request,error)
             override fun onReceivedHttpError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceResponse) = original.onReceivedHttpError(view,request,error)
@@ -1120,13 +1173,17 @@ private class MediaPreviews(private val activity: MainActivity) {
         val token = source.removePrefix("/native-media-preview/")
         require(source == "/native-media-preview/$token" && sources.containsKey(token)) { "Preview expired; select the file again" }
         activity.runOnUiThread {
-            if (!sources.containsKey(token)) return@runOnUiThread
+            if (!sources.containsKey(token) || activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+            try {
             compatible?.close()
             compatible = CompatiblePreview(activity, token, ::response, onClosed = {
                 activity.runOnUiThread {browser?.evaluateJavascript("window.mediaManagerInlineRefresh?.()",null)}
             }).also { it.show() }
+            } catch (error: Exception) { failed(error) }
+              catch (error: LinkageError) { failed(error) }
         }
     }
+    fun dismiss(){activity.runOnUiThread {compatible?.close(); compatible = null}}
     fun pause(){activity.runOnUiThread {compatible?.pause()}}
     fun clear() {
         activity.runOnUiThread { compatible?.close(); compatible = null }
@@ -1246,7 +1303,7 @@ private class CompatiblePreview(
             val seek=android.widget.SeekBar(activity).apply {max=1000;contentDescription="Playback position"}
             column.addView(seek)
             val controls=LinearLayout(activity).apply {gravity=Gravity.CENTER}
-            val pause=Button(activity).apply {text="Pause";setOnClickListener {if(mediaPlayer.isPlaying){mediaPlayer.pause();text="Play"}else{mediaPlayer.play();text="Pause"}}}
+            val pause=Button(activity).apply {text="Pause";setOnClickListener {if(closed)return@setOnClickListener;if(mediaPlayer.isPlaying){mediaPlayer.pause();text="Play"}else{mediaPlayer.play();text="Pause"}}}
             controls.addView(pause)
             if (!inline) controls.addView(Button(activity).apply {text="Close";setOnClickListener {close()}})
             column.addView(controls)
@@ -1262,11 +1319,22 @@ private class CompatiblePreview(
             } else {
             dialog.setContentView(column);dialog.setOnDismissListener {close()}
             dialog.show();dialog.window?.setLayout(-1,-1)
+            dialog.window?.let { window ->
+                androidx.core.view.WindowCompat.enableEdgeToEdge(window)
+                androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(column) { view, insets ->
+                    val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                        androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+                    view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+                    insets
+                }
+                androidx.core.view.ViewCompat.requestApplyInsets(column)
+            }
             dialog.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
             // TextureView stays inside the inline bounds and follows sheet animations.
             mediaPlayer.attachViews(video,null,true,inline)
             mediaPlayer.setEventListener {event ->
+                if (closed || activity.isDestroyed) return@setEventListener
                 if(BuildConfig.DEBUG && activity.intent.getBooleanExtra("media_manager_preview_fixture",false)) {
                     val state=when(event.type){
                         org.videolan.libvlc.MediaPlayer.Event.Playing -> "playing"
@@ -1286,7 +1354,7 @@ private class CompatiblePreview(
                 }
             }
             seek.setOnSeekBarChangeListener(object:android.widget.SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar:android.widget.SeekBar,progress:Int,user:Boolean){if(user && mediaPlayer.isSeekable)mediaPlayer.position=progress/1000f}
+                override fun onProgressChanged(bar:android.widget.SeekBar,progress:Int,user:Boolean){if(!closed && user && mediaPlayer.isSeekable)mediaPlayer.position=progress/1000f}
                 override fun onStartTrackingTouch(bar:android.widget.SeekBar){}
                 override fun onStopTrackingTouch(bar:android.widget.SeekBar){}
             })
@@ -1317,7 +1385,7 @@ private class CompatiblePreview(
         }
         view.visibility=View.VISIBLE
     }
-    fun pause(){player?.pause()}
+    fun pause(){if(!closed)player?.pause()}
     fun close(){
         if(closed)return;closed=true
         handler.removeCallbacksAndMessages(null)
@@ -1325,10 +1393,11 @@ private class CompatiblePreview(
         workers.shutdownNow()
         root?.let {(it.parent as? android.view.ViewGroup)?.removeView(it)};root=null
         val oldPlayer=player;val oldEngine=lib;player=null;lib=null
-        oldPlayer?.setEventListener(null);oldPlayer?.detachViews()
+        runCatching { oldPlayer?.setEventListener(null) }
+        runCatching { oldPlayer?.detachViews() }
         // Native stop may wait for decoder/network teardown; never wait on the UI thread.
         Thread({runCatching {oldPlayer?.stop()};runCatching {oldPlayer?.release()};runCatching {oldEngine?.release()}},"media-preview-release").start()
-        dialog.dismiss()
+        runCatching { dialog.setOnDismissListener(null); dialog.dismiss() }
         onClosed()
     }
     private fun serve(socket:java.net.Socket){

@@ -135,7 +135,7 @@ main{display:block;padding:0;margin:0;gap:0}
 html,body,#main{width:100%;height:100%;min-width:0;min-height:0}
 main{height:100dvh;min-height:0;overflow:hidden}
 /* Keep mobile identity and controls below status bars and display cutouts. */
-.mobile-app{padding-top:max(env(safe-area-inset-top,0px),var(--native-safe-top,24px));padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px);background:#111b2b}
+.mobile-app{padding-top:max(env(safe-area-inset-top,0px),var(--native-safe-top,24px));padding-bottom:max(env(safe-area-inset-bottom,0px),var(--native-safe-bottom,0px));padding-left:max(env(safe-area-inset-left,0px),var(--native-safe-left,0px));padding-right:max(env(safe-area-inset-right,0px),var(--native-safe-right,0px));background:#111b2b}
 .layout{width:100%;grid-template-rows:auto minmax(0,1fr);grid-template-columns:minmax(240px,min(var(--left-width,340px),30vw)) 10px minmax(280px,1fr) 10px minmax(220px,min(var(--right-width,300px),28vw))}
 .layout>.panel,.layout>.center-column{min-width:0;min-height:0;max-width:100%}
 .controls,.preview{overflow-x:hidden}

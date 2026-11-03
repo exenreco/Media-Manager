@@ -9,6 +9,7 @@ min_sdk = 24
 compile_sdk = 36
 target_sdk = 36
 gradle_dependencies = [
+    "androidx.core:core-ktx:1.17.0",
     "com.android.billingclient:billing:9.1.0",
     "org.videolan.android:libvlc-all:3.7.5",
     "com.journeyapps:zxing-android-embedded:4.3.0",
