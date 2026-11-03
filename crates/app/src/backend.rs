@@ -178,6 +178,40 @@ impl Connection {
     }
 
     pub async fn apply(&self, plan: RenamePlan) -> Result<RenamePlan> {
+        #[cfg(any(target_os = "macos", windows))]
+        let reservation = if plan
+            .tasks
+            .iter()
+            .any(|task| task.status == tv_manager_core::rename::TaskStatus::Ready)
+            && !crate::desktop_pro::owned().await
+        {
+            let title = crate::rename_quota::title_key(&plan.show)?;
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    crate::rename_quota::Reservation::acquire(
+                        crate::rename_quota::path()?,
+                        &title,
+                        crate::rename_quota::now()?,
+                    )
+                })
+                .await??,
+            )
+        } else {
+            None
+        };
+        let result = self.apply_unmetered(plan).await;
+        #[cfg(any(target_os = "macos", windows))]
+        if let (Some(reservation), Ok(completed)) = (reservation, &result) {
+            let successful = completed
+                .tasks
+                .iter()
+                .any(|task| task.status == tv_manager_core::rename::TaskStatus::Applied);
+            tokio::task::spawn_blocking(move || reservation.finish(successful)).await??;
+        }
+        result
+    }
+
+    async fn apply_unmetered(&self, plan: RenamePlan) -> Result<RenamePlan> {
         if !self.remote {
             #[cfg(any(target_os = "android", target_os = "ios"))]
             return crate::mobile_storage::apply(plan).await;

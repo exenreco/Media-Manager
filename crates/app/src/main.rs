@@ -3,6 +3,8 @@
 mod ads;
 mod backend;
 mod branding;
+#[cfg(any(target_os = "macos", windows))]
+mod desktop_pro;
 mod library_tools;
 mod media_player;
 mod menus;
@@ -14,9 +16,16 @@ mod pairing;
 mod poster;
 mod preview;
 mod profiles;
+#[cfg(any(target_os = "macos", windows, test))]
+mod rename_quota;
 mod session;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "ios",
+    all(target_os = "macos", feature = "mac-app-store")
+)))]
 mod updates;
+mod walkthrough;
 mod workspace;
 
 use backend::Connection;
@@ -37,8 +46,31 @@ const CSS: &str = concat!(
     "\n",
     include_str!("preview-sheet.css"),
     "\n",
-    include_str!("menu-sheet.css")
+    include_str!("menu-sheet.css"),
+    "\n",
+    include_str!("walkthrough.css")
 );
+
+fn workspace_styles() -> std::borrow::Cow<'static, str> {
+    // These paired breakpoints select navigation modes, not device sizes.
+    // Native mobile keeps the footer and single-panel workspace on tablets and
+    // in landscape, while desktop/web retain responsive window navigation.
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        CSS.replace("(max-width:760px)", "(min-width:0px)")
+            .replace("(min-width:761px)", "(max-width:0px)")
+            .into()
+    } else {
+        CSS.into()
+    }
+}
+
+#[component]
+fn DesktopProSettings() -> Element {
+    #[cfg(any(target_os = "macos", windows))]
+    return rsx! { hr {class:"desktop-pro-divider"} desktop_pro::ProPanel {} };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    rsx! {}
+}
 
 #[derive(Clone, Copy)]
 struct PanelDrag {
@@ -162,6 +194,8 @@ fn MobileStorageBridge() -> Element {
 }
 
 fn main() {
+    #[cfg(target_os = "ios")]
+    ads::prepare_scene_lifecycle();
     #[cfg(all(
         feature = "desktop",
         not(any(target_os = "android", target_os = "ios"))
@@ -178,8 +212,11 @@ fn main() {
 
 #[component]
 fn App() -> Element {
+    #[cfg(any(target_os = "macos", windows))]
+    use_hook(desktop_pro::initialize);
     let mut resume = use_signal(|| None::<session::Session>);
     let mut persistence_ready = use_signal(|| false);
+    let mut tour = use_signal(|| None::<usize>);
     let mut form = use_signal(Form::default);
     let mut connection = use_signal(Connection::default);
     let mut plan = use_signal(|| None::<RenamePlan>);
@@ -188,7 +225,11 @@ fn App() -> Element {
     let mut snapshot = use_signal(|| None::<(Form, Connection)>);
     let mut busy = use_signal(|| false);
     let mut refreshing = use_signal(|| false);
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "ios",
+        all(target_os = "macos", feature = "mac-app-store")
+    )))]
     let updater = updates::use_updater();
     let mut message = use_signal(String::new);
     let mut persistence_error = use_signal(String::new);
@@ -303,7 +344,7 @@ fn App() -> Element {
         use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<dioxus::core::Task>)));
     use_effect(move || {
         let context = library_context();
-        let blocked = busy() || !persistence_ready() || resume.read().is_some();
+        let blocked = tour().is_some() || busy() || !persistence_ready() || resume.read().is_some();
         let open = workspace_open();
         if let Some(task) = pending_library.borrow_mut().take() {
             task.cancel();
@@ -356,7 +397,8 @@ fn App() -> Element {
         let f = form();
         let c = connection();
         let open = workspace_open();
-        let blocked = busy()
+        let blocked = tour().is_some()
+            || busy()
             || loading_library()
             || confirming()
             || !persistence_ready()
@@ -542,18 +584,33 @@ fn App() -> Element {
         } } };
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "ios",
+        all(target_os = "macos", feature = "mac-app-store")
+    )))]
     let updates_panel = rsx! { updates::UpdatePanel {updater,blocked:busy() || refreshing() || downloading_posters() || confirming()} };
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let updates_panel = rsx! {};
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(all(target_os = "macos", feature = "mac-app-store"))]
+    let updates_panel = rsx! { section { h2 {"App updates"} p {class:"hint", "Updates are delivered by the Mac App Store."} } };
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "ios",
+        all(target_os = "macos", feature = "mac-app-store")
+    )))]
     let update_notice =
         rsx! { updates::UpdateNotice {updater,onopen:move |_|active_panel.set("settings")} };
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(any(
+        target_os = "android",
+        target_os = "ios",
+        all(target_os = "macos", feature = "mac-app-store")
+    ))]
     let update_notice = rsx! {};
     rsx! {
-        style { "{CSS}" }
+        style { "{workspace_styles()}" }
         {update_notice}
+        walkthrough::Walkthrough {tour, active:active_panel, ready:persistence_ready() && resume.read().is_none() && !busy()}
         if cfg!(any(target_os = "android", target_os = "ios")) { MobileStorageBridge {} ads::NativeAdBridge {} }
         onboarding::ConnectionIsland {notice:connection_notice,active:active_panel,onlibrary:move |_|navigate.call("preview")}
         main {inert:matches!(connection_notice(),onboarding::Notice::Required(_) | onboarding::Notice::MatchSelected(_)).then_some(""), "data-view":active_panel(), "data-media-selected":(matches!(active_panel(),"preview"|"inspector"|"posters") && if active_panel()=="posters" {selected_artwork().is_some()}else{selected().is_some_and(|index| plan.read().as_ref().is_some_and(|p| p.tasks.get(index).is_some()))}).to_string(), class: if cfg!(any(target_os = "android", target_os = "ios")) { "mobile-app" } else { "desktop-app" },
@@ -566,7 +623,7 @@ fn App() -> Element {
             },
             onpointerup: move |_| { if drag().is_some() { drag.set(None); } },
             onpointercancel: move |_| drag.set(None),
-            workspace::Titlebar {form,disabled:busy() || confirming() || resume.read().is_some(),context:match active_panel(){"welcome"=>"Get Started","health"=>"Health","settings"=>"Settings","preview"|"inspector"|"posters"=>"Library",_=>"Details"}}
+            workspace::Titlebar {form,onwalkthrough:move |_|tour.set(Some(walkthrough::page_index(active_panel()))),disabled:busy() || confirming() || resume.read().is_some(),context:match active_panel(){"welcome"=>"Get Started","health"=>"Health","settings"=>"Settings","preview"|"inspector"|"posters"=>"Library",_=>"Details"}}
             if cfg!(not(any(target_os="android",target_os="ios"))) {workspace::ResizeEdges {}}
             workspace::Navigation {active:active_panel,onnavigate:move|target|navigate.call(target)}
             div { class: "layout", "data-active-panel": active_panel(), style: "--left-width:{left_width}px;--right-width:{right_width}px;",
@@ -636,7 +693,7 @@ fn App() -> Element {
                             oninput: move |e| form.write().folder = e.value() } }
                         if !connection_value.remote {
                             if cfg!(any(target_os = "android", target_os = "ios")) {
-                                button { class: "secondary", onclick: move |_| {
+                                button { class: "secondary", "data-tour":"browse-folder", onclick: move |_| {
                                     #[cfg(any(target_os = "android", target_os = "ios"))]
                                     spawn(async move {
                                         match mobile_storage::pick().await {
@@ -646,7 +703,7 @@ fn App() -> Element {
                                     });
                                 }, "Choose media folder" }
                             } else {
-                                button { class: "secondary", onclick: move |_| {
+                                button { class: "secondary", "data-tour":"browse-folder", onclick: move |_| {
                                     #[cfg(all(feature = "desktop", not(any(target_os = "android", target_os = "ios"))))]
                                     {
                                         let parent = dioxus::desktop::window();
@@ -738,7 +795,7 @@ fn App() -> Element {
                 if active_panel()=="health" {
                     section {class:"panel health-panel","aria-label":"Library health",
                         div {class:"preview-heading",div {p {class:"eyebrow","YOUR LIBRARY"} h2 {"Library health"}}}
-                        library_tools::HealthDashboard {connection,form,plan,busy,consumed,changed:changed || refreshing(),refreshing:refreshing()}
+                        library_tools::HealthDashboard {connection,form,plan,busy,consumed,changed:tour().is_some() || changed || refreshing(),refreshing:refreshing()}
                         p {class:"status",role:"status","{message}"}
                     }
                 }
@@ -747,6 +804,7 @@ fn App() -> Element {
                         div {class:"preview-heading",div {p {class:"eyebrow","PREFERENCES & HISTORY"} h2 {"Settings"}}}
                         library_tools::RenameHistory {connection,form,plan,busy,message,consumed}
                         {updates_panel}
+                        DesktopProSettings {}
                         if cfg!(any(target_os = "android", target_os = "ios")) {ads::AdPreferences {}}
                         p {class:"status",role:"status","{message}"}
                     }

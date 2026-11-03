@@ -6,6 +6,7 @@ import GoogleMobileAds
 final class FullscreenAds: NSObject, FullScreenContentDelegate {
     private weak var controller: UIViewController?
     private let allowed: () -> Bool
+    private let permanentAdFree: () -> Bool
     private let publish: ([String: Any]) -> Void
     private let changed: () -> Void
     private let prefs = UserDefaults.standard
@@ -22,20 +23,26 @@ final class FullscreenAds: NSObject, FullScreenContentDelegate {
     private var showingAd: AnyObject?
     private var earned = false
     private var showingReward = false
+    private var statusMessage = ""
     private(set) var presenting = false
     var adFree: Bool { prefs.double(forKey: "mediaManagerAdFreeUntil") > Date().timeIntervalSince1970 }
-    var suppressed: Bool { adFree || presenting }
+    var suppressed: Bool { permanentAdFree() || adFree || presenting }
 
     init(controller: UIViewController?, allowed: @escaping () -> Bool,
+         permanentAdFree: @escaping () -> Bool,
          publish: @escaping ([String: Any]) -> Void, changed: @escaping () -> Void) {
-        self.controller = controller; self.allowed = allowed; self.publish = publish; self.changed = changed
+        self.controller = controller; self.allowed = allowed; self.permanentAdFree = permanentAdFree
+        self.publish = publish; self.changed = changed
         super.init()
     }
-    func state(_ message: String = "") {
+    func state(_ message: String? = nil) {
         guard !disposed else { return }
+        if let message { statusMessage = message }
         let until = prefs.double(forKey: "mediaManagerAdFreeUntil")
         publish(["adFreeUntil": until * 1000, "presenting": presenting,
-                 "rewardedReady": rewarded != nil && fresh(rewardedAt), "message": message])
+                 "permanentAdFree": permanentAdFree(),
+                 "rewardedReady": rewarded != nil && fresh(rewardedAt),
+                 "rewardedLoading": loadingRewarded, "message": statusMessage])
         expiry?.invalidate(); expiry = nil
         if adFree {
             expiry = Timer.scheduledTimer(withTimeInterval: max(0.1, until - Date().timeIntervalSince1970 + 0.05), repeats: false) { [weak self] _ in
@@ -44,7 +51,7 @@ final class FullscreenAds: NSObject, FullScreenContentDelegate {
         }
     }
     private func fresh(_ time: TimeInterval) -> Bool { ProcessInfo.processInfo.systemUptime - time < 3600 }
-    func reset() { generation += 1; interstitial = nil; rewarded = nil; loadingInterstitial = false; loadingRewarded = false; state() }
+    func reset() { generation += 1; interstitial = nil; rewarded = nil; loadingInterstitial = false; loadingRewarded = false; state("") }
     func close() { disposed = true; reset(); expiry?.invalidate(); expiry = nil }
     func load() {
         guard !disposed, allowed(), !suppressed else { return }
@@ -75,23 +82,39 @@ final class FullscreenAds: NSObject, FullScreenContentDelegate {
         }
         if rewarded == nil && !loadingRewarded {
             loadingRewarded = true
+            state("Loading a rewarded ad… Tap again when it is ready.")
             Task { @MainActor [weak self] in
                 do {
                     let ad = try await RewardedAd.load(with: rewardedUnit, request: Request())
                     guard let self, !self.disposed, self.generation == epoch else { return }
                     self.loadingRewarded = false
                     if self.allowed() && !self.adFree { self.rewarded = ad; self.rewardedAt = ProcessInfo.processInfo.systemUptime; ad.fullScreenContentDelegate = self }
-                    self.state()
+                    self.state(self.rewarded != nil ? "Rewarded ad ready. Watching is optional." : "Rewarded ad unavailable. Please try again when the app is active.")
                 } catch {
                     guard let self, !self.disposed, self.generation == epoch else { return }
-                    self.loadingRewarded = false; self.state("No rewarded ad is available. Please try again later.")
+                    self.loadingRewarded = false
+                    let detail = error as NSError
+                    NSLog("MediaManagerAds rewarded load failed: %@", detail.description)
+                    if detail.domain == GADErrorDomain && detail.code == 1 {
+                        self.state("No rewarded ad is available right now. Please try again later. No ad-free time has been activated.")
+                    } else {
+                        self.state("Could not load a rewarded ad (code \(detail.code)). Please try again later.")
+                    }
                 }
             }
         }
     }
     func show(reward: Bool) {
-        guard !disposed, allowed(), !suppressed, let controller,
-              controller.viewIfLoaded?.window != nil, controller.presentedViewController == nil else { return }
+        guard !disposed, !suppressed else { return }
+        guard allowed() else {
+            if reward { state("Rewarded ads are not ready. Please check advertising privacy choices and try again.") }
+            return
+        }
+        guard let controller, controller.viewIfLoaded?.window != nil,
+              controller.presentedViewController == nil else {
+            if reward { state("Close the current screen or dialog before watching an ad.") }
+            return
+        }
         if !reward && (ProcessInfo.processInfo.systemUptime - sessionStart < 120 ||
             Date().timeIntervalSince1970 - prefs.double(forKey: "mediaManagerLastInterstitial") < 600) { return }
         if reward && (rewarded == nil || !fresh(rewardedAt)) {

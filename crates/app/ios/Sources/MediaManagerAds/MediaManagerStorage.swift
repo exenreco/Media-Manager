@@ -123,9 +123,12 @@ public final class MediaManagerStorage: NSObject, WKScriptMessageHandler, UIDocu
     }
     private static let queue = DispatchQueue(label: "MediaManagerStorage")
     public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        controller.dismiss(animated: true)
         if let command = pending { reply(command, ["error": "Folder selection cancelled"]) }; pending = nil
     }
     public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        NSLog("MediaManagerStorage folder picker completed (%ld selections)", urls.count)
+        controller.dismiss(animated: true)
         guard let command = pending else { return }; pending = nil
         do {
             guard let url = urls.first, url.startAccessingSecurityScopedResource() else { throw fail("Folder permission was not granted") }

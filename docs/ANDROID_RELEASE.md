@@ -1,3 +1,7 @@
+## Current release: 1.0.3
+
+The current ARM64 rebuild uses version code **1000011** and includes the shared interactive walkthrough and latest app features. The release workflow builds APK/AAB files and matching native symbols. CI outputs are unsigned; use the existing private upload/signing key locally before installation or Play upload. Older build records below describe historical artifacts.
+
 # Android Play upload builds
 
 The Play bundle uses `com.tvshowmanager.app`, targets API 36 and contains the

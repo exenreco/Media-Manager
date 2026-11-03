@@ -25,14 +25,20 @@ pub fn Icon(name: String) -> Element {
         "back" => "m14 5-7 7 7 7",
         "minimize" => "M5 12h14",
         "maximize" => "M5 5h14v14H5z",
+        "help" => "M9 8a3 3 0 1 1 5 2c-2 1-2 2-2 3 M12 17h.01 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0",
         _ => "M12 3v18 M3 12h18",
     };
     rsx! { svg { width:"20",height:"20",view_box:"0 0 24 24",fill:"none",stroke:"currentColor",stroke_width:"1.6",stroke_linecap:"round",stroke_linejoin:"round","aria-hidden":"true", path {d:path} } }
 }
 
 #[component]
-pub fn Titlebar(context: String, mut form: Signal<crate::Form>, disabled: bool) -> Element {
-    rsx! { header {class:"workspace-titlebar",
+pub fn Titlebar(
+    context: String,
+    mut form: Signal<crate::Form>,
+    disabled: bool,
+    onwalkthrough: EventHandler<()>,
+) -> Element {
+    rsx! { header {class:if cfg!(target_os="macos") {"workspace-titlebar macos-titlebar"}else{"workspace-titlebar"},
         div {class:"titlebar-drag", onmousedown:move|_|drag_window(), ondoubleclick:move|_|window_action("maximize"),
             img {src:branding::icon_uri(),alt:""} strong {"Media Manager"} span {class:"titlebar-context","{context}"}
         }
@@ -46,11 +52,14 @@ pub fn Titlebar(context: String, mut form: Signal<crate::Form>, disabled: bool) 
                 }
             }
         }
-        span {class:"titlebar-separator","aria-hidden":"true","|"}
-        div {class:"window-actions",
+        button {class:"walkthrough-replay",r#type:"button",title:"Replay walkthrough","aria-label":"Replay walkthrough",onclick:move |_|onwalkthrough.call(()),Icon {name:"help"}}
+        if cfg!(not(any(target_os="android", target_os="ios", target_os="macos"))) {
+          span {class:"titlebar-separator","aria-hidden":"true","|"}
+          div {class:"window-actions",
             button {title:"Minimize","aria-label":"Minimize window",onclick:move|_|window_action("minimize"),Icon {name:"minimize"}}
             button {title:"Maximize or restore","aria-label":"Maximize or restore window",onclick:move|_|window_action("maximize"),Icon {name:"maximize"}}
             button {class:"window-close",title:"Close","aria-label":"Close window",onclick:move|_|window_action("close"),Icon {name:"close"}}
+          }
         }
     } }
 }
@@ -179,21 +188,23 @@ pub fn LibraryTabs(mut active: Signal<&'static str>) -> Element {
 pub fn Navigation(active: Signal<&'static str>, onnavigate: EventHandler<&'static str>) -> Element {
     let mut expanded = use_signal(|| false);
     rsx! {
-        nav {class:"desktop-rail","aria-label":"Workspace navigation",
+        if cfg!(not(any(target_os="android", target_os="ios"))) {
+          nav {class:"desktop-rail","aria-label":"Workspace navigation",
             for (view,icon,label) in DESTINATIONS {
-                button {class:if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"rail-item active"}else{"rail-item"},title:label,"aria-label":label,"aria-current":if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"page"}else{"false"},onclick:move|_|onnavigate.call(view),Icon {name:icon} span {"{label}"}}
+                button {"data-tour":view,class:if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"rail-item active"}else{"rail-item"},title:label,"aria-label":label,"aria-current":if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"page"}else{"false"},onclick:move|_|onnavigate.call(view),Icon {name:icon} span {"{label}"}}
             }
             span {class:"rail-version","MM"}
+          }
         }
         div {class:if expanded(){"mobile-dock expanded"}else{"mobile-dock"},onkeydown:move|e|{if e.key()==Key::Escape {expanded.set(false);}},
             nav {class:"dock-grid","aria-label":"All workspace tools","inert":(!expanded()).then_some(""),
                 for (view,icon,label) in DESTINATIONS {
-                    button {class:if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"dock-tool active"}else{"dock-tool"},onclick:move|_|{onnavigate.call(view);expanded.set(false);},Icon {name:icon} span {"{label}"}}
+                    button {"data-tour":view,class:if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"dock-tool active"}else{"dock-tool"},onclick:move|_|{onnavigate.call(view);expanded.set(false);},Icon {name:icon} span {"{label}"}}
                 }
             }
             nav {class:"dock-bar","aria-label":"Mobile navigation",
                 for (view,icon,label) in [("welcome","welcome","Get Started"),("naming","naming","Details"),("preview","library","Library")] {
-                    button {class:if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"dock-tab active"}else{"dock-tab"},tabindex:if expanded(){"-1"}else{"0"},"aria-hidden":expanded().to_string(),onclick:move|_|{onnavigate.call(view);expanded.set(false);},Icon {name:icon} span {"{label}"}}
+                    button {"data-tour":view,class:if active()==view || (view=="preview" && matches!(active(),"inspector"|"posters")) {"dock-tab active"}else{"dock-tab"},tabindex:if expanded(){"-1"}else{"0"},"aria-hidden":expanded().to_string(),onclick:move|_|{onnavigate.call(view);expanded.set(false);},Icon {name:icon} span {"{label}"}}
                 }
                 button {class:"dock-more","aria-label":if expanded(){"Close tools"}else{"Expand tools"},"aria-expanded":expanded().to_string(),onclick:move|_|expanded.toggle(),Icon {name:if expanded(){"close"}else{"add"}}}
             }

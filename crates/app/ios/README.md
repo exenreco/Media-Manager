@@ -28,7 +28,7 @@ not a replacement for the app's complete generated plist.
 
 ## Build on a Mac
 
-This checkout is on Windows. The current source compiled on macOS CI and passed
+The current source compiled on macOS CI and passed
 installation/launch in an iPhone Simulator after correcting platform metadata and
 static SDK packaging. The captured test ad's SDK validator reported no implementation
 issues. Full feature acceptance on physical devices and production/device signing
@@ -89,6 +89,59 @@ Do not click production ads while testing.
 Shared bridge tests: `node --test android/tests/native-ad.test.cjs`.
 Slice-selection tests: `python3 -m unittest discover -s ios/tests`.
 
+## One-time ad removal
+
+Settings → Advertising includes **Remove ads** and **Restore purchases** on iOS.
+The native StoreKit 2 integration uses a non-consumable product with the ID
+`remove_ads`, configured by `MediaManagerRemoveAdsProductID` in the `[ios.plist]`
+section of `Dioxus.toml`. If App Store Connect uses a different product ID, change
+that value before building. Create the matching non-consumable under the
+`com.tvshowmanager.app` app in App Store Connect, configure its localization and
+price, and complete Apple's availability and review requirements. The app shows
+StoreKit's localized price; it does not hard-code an amount or offer a subscription.
+
+Only StoreKit-verified, unrevoked transactions for that product grant ad removal.
+Ownership is read from StoreKit on startup and foregrounding, and transaction
+updates handle purchases completed elsewhere and revocations. Native, rewarded
+and interstitial ads are suppressed for owners. Pending payments do not grant
+ownership. Web content cannot grant ownership, and no purchase receipts or tokens
+are passed into JavaScript. Restore explicitly calls `AppStore.sync()` and may
+show Apple's account UI. It is enabled only for a verified active purchase and
+for ten minutes after its StoreKit purchase date. The native layer enforces this
+window as well as the UI; automatic entitlement checks continue after it expires. Android purchases are separate
+from App Store purchases.
+
+A standalone simulator install without a configured StoreKit test session may
+not return the product. The controls remain visible, with purchasing disabled and
+an availability message. Use an App Store sandbox/TestFlight build with the
+configured product to validate pricing, cancellation, pending approval, completion,
+restoring on another device with the same Apple Account, offline relaunch, and
+refund/revocation. Check that no ad placement or fullscreen ad is shown after a
+verified purchase. Purchase-flow acceptance remains pending until these native
+store scenarios are exercised; bridge tests do not substitute for them.
+
+Purchase UI/bridge tests:
+`node --test tests/billing.test.cjs android/tests/native-ad.test.cjs`.
+
+### App Store Connect configuration (2026-11-02)
+
+- Registered explicit bundle ID: `com.tvshowmanager.app`, with In-App Purchase enabled.
+- App record: **Media Manager by Exenreco**, Apple ID `6829643613`, iOS,
+  SKU `media-manager-ios`, primary language English (U.S.). The shorter
+  **Media Manager** name was unavailable in App Store Connect.
+- Product: **Remove ads**, ID `remove_ads`, non-consumable, Apple ID `6829644288`.
+- Base price: **USD 5.99** in the United States, with Apple's automatically
+  adjusted regional prices and availability in all 175 current storefronts.
+- English display name: **Remove ads**. Description:
+  **Permanently remove all ads. No subscription.** Review navigation notes are saved.
+- Status: **Prepare for Submission**; no app or purchase has been submitted for review.
+  The iOS Settings review screenshot is uploaded and saved. See the release
+  preparation record below for the later signing, upload and listing work.
+  Paid Applications agreement/banking/tax status and sandbox purchase acceptance
+  still require verification.
+
+[Purchase configuration](https://appstoreconnect.apple.com/apps/6829643613/distribution/iaps/6829644288).
+
 References: [SDK setup](https://developers.google.com/admob/ios/quick-start),
 [native loading](https://developers.google.com/admob/ios/native),
 [native display](https://developers.google.com/admob/ios/native/advanced),
@@ -119,3 +172,84 @@ duplicate the same ad view or create extra requests when switching panels.
 Interstitials are offered only immediately after a completed rename batch with no failures and at least one renamed file. The native layer requires two minutes in the current session and ten minutes between interstitial impressions. Unavailable ads are skipped; no delayed presentation is queued. Background apps, open dialogs, busy operations and playing videos block UI requests.
 
 Settings offers an optional rewarded ad for 30 minutes without native or fullscreen ads on this device. Only the SDK earned-reward callback saves the expiration in native preferences; closing early gives no reward. The benefit survives app restarts. The SDK controls ad dismissal. Privacy choices gate all requests; changing them discards cached fullscreen ads. Cached ads expire after one hour. Debug builds use Google's test IDs; release builds use the configured production IDs.
+
+Rewarded-ad status retains consent/load errors and disables repeated taps while loading. A first tap may load an ad; tap again after the ready message to watch it. Run `node --test tests/fullscreen-ad.test.cjs` for loading, retry, reward expiry and UI blocking coverage.
+
+On this Mac (2026-11-02), `fundingchoicesmessages.google.com` resolved to `0.0.0.0`/`::`, causing UMP connection-refused errors. Permit the consent service in the network filter or use an unfiltered connection to test ads. Do not bypass consent or grant rewards without the SDK callback.
+
+### Local release preparation (2026-11-02)
+
+Version 1.0.2 built for physical iPhones with Dioxus 0.7.10 and Xcode 27.2
+(`aarch64-apple-ios`). Apple Distribution signing for team `PBA93F33RM` and the
+**Media Manager App Store** provisioning profile are installed locally. Private
+keys remain in the Mac Keychain and are not stored in this repository.
+
+`SceneDelegate.swift` adopts the single Dioxus/Tao window into `UIWindowScene`
+and forwards active/background transitions to Tao. `main` loads the Swift framework
+before UIKit looks up the scene delegate. On bridge attachment, the window joins
+the connected scene and the WebView uses flexible width/height without flexible
+margins. The iPhone and iPad simulator launches use the actual SDK 27.2 metadata;
+the old simulator-only SDK version workaround is no longer required.
+
+Native iOS and Android always use the footer navigation and single-panel
+workspace, including tablet and landscape widths. Their render tree omits the
+desktop sidebar and minimize/maximize/close controls. Desktop and web keep their
+responsive navigation. Short landscape mobile windows reserve space around
+display cutouts even when the embedded webview reports zero safe-area insets.
+This navigation change is local and is not included in the already submitted
+1.0.2 (1.0.3) build.
+
+The finishing script supplies APPL bundle metadata, an iOS 14+ dictionary launch
+screen, the app name, the app's required-API privacy manifest, and matching iOS 15
+minimum-version metadata for the Swift framework. It can repackage copied SDK
+resources that were originally read-only. SDK privacy manifests remain bundled.
+
+The signed archive passed Xcode's App Store Connect validation and version
+**1.0.2 (1.0.3)** was uploaded successfully. A signed IPA and SHA-256 checksum are
+saved locally in `dist/ios/`. The processed build was attached to version 1.0.2;
+no App Review approval is implied.
+
+App Store Connect now has saved English listing metadata and reviewer contact
+information, content rights confirmed by the owner, and a 4+ age rating with
+advertising declared (not Made for Kids). Privacy responses covering the seven
+Google SDK data categories are published with owner approval. The public privacy
+policy URL is configured. Free download pricing was configured; France was
+subsequently excluded
+with owner approval, leaving 174 storefronts. Standard third-party cryptography
+was declared in Apple’s questionnaire.
+The account holder completed banking and U.S. W-9 information. The W-9 is
+**Active**; banking and the Paid Apps Agreement are **Processing** as of
+2026-11-02. The non-consumable `remove_ads` remains USD 5.99 and was added
+to the same iOS submission as version 1.0.2. Both items are **Waiting for Review**.
+Actual simulator
+screenshots are uploaded for 6.9-inch iPhone (1320×2868) and 13-inch iPad
+(2064×2752), with smaller sizes inheriting assets where supported.
+
+App Store sandbox purchase, restore and reward-completion acceptance still require
+native store/ad testing. The local DNS filter still blocks Google's consent host.
+Apple must finish processing the banking and agreement information before
+monetization can be activated. Re-enabling France requires revisiting Apple’s encryption
+documentation requirements.
+
+The original build was blocked at Add for Review with a beta-toolchain message,
+although Apple's public release listing identifies the installed Xcode 27.2
+(27B52) as a release. The packaging script now records the actual selected Xcode,
+SDK build and host OS build identifiers, which Dioxus's generated plist omitted.
+A replacement archive uses bundle build 1.0.3 with marketing version 1.0.2 and
+was uploaded successfully. Apple accepted this replacement for review on
+2026-11-02 at 10:52 AM, together with `remove_ads`; submission ID
+`cf389c37-3e0d-46c4-b374-221e718652fe`. Both items are **Waiting for Review**.
+The replacement signed IPA and checksum are in
+`dist/ios/Media-Manager-1.0.2-build-1.0.3.ipa` and `.ipa.sha256`.
+This metadata correction does not change or lower the executable's SDK version.
+
+### Release 1.0.3 (1.0.4)
+
+The updated physical-device release was signed and uploaded successfully on
+2026-11-02. It includes the interactive walkthrough and footer-only native mobile
+navigation. The 1.0.3 draft uses current 6.9-inch iPhone and 13-inch iPad simulator
+screenshots. The previous 1.0.2 submission was subsequently rejected under
+Guideline 2.1 with a request for more review information and a physical-device
+recording. Detailed review notes are saved, but physical-device QA/recording is
+still required before resubmission. See
+[Apple release 1.0.3](../../../docs/APPLE_RELEASE_1.0.3.md).

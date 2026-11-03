@@ -11,6 +11,13 @@ extern "Swift" {
     pub fn detach_storage(this: &MediaManagerStorage);
 }
 
+/// UIKit resolves the scene delegate before mounting the first Dioxus component.
+/// Load its Swift framework before UIApplicationMain rather than at bridge attach.
+#[cfg(target_os = "ios")]
+pub fn prepare_scene_lifecycle() {
+    MediaManagerAds::new().expect("The iOS scene framework must load before launch");
+}
+
 #[component]
 pub fn NativeAdBridge() -> Element {
     #[cfg(target_os = "ios")]
@@ -28,7 +35,7 @@ pub fn NativeAdBridge() -> Element {
     use_effect(|| {
         let _ = document::eval(include_str!("fullscreen-ad.js"));
         let _ = document::eval(include_str!("native-ad.js"));
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         let _ = document::eval(include_str!("billing.js"));
     });
     use_drop(|| {
@@ -64,13 +71,17 @@ pub fn AdPreferences() -> Element {
         section {class:"settings-group",
             hr {class:"advertising-divider"}
             h2 {"Advertising"}
-            if cfg!(target_os = "android") {
-                p {class:"hint","Remove all ads on Android with a one-time Google Play purchase. Restore on other Android devices using the same Google Play account."}
+            if cfg!(any(target_os = "android", target_os = "ios")) {
+                if cfg!(target_os = "ios") {
+                    p {class:"hint","Remove all ads on iOS with a one-time App Store purchase. Restore on other iOS devices using the same Apple Account. No subscription."}
+                } else {
+                    p {class:"hint","Remove all ads on Android with a one-time Google Play purchase. Restore on other Android devices using the same Google Play account."}
+                }
                 div {class:"button-row billing-actions",
                     button {r#type:"button",class:"primary billing-buy",disabled:true,"Remove ads"}
                     button {r#type:"button",class:"secondary billing-restore",disabled:true,"Restore purchases"}
                 }
-                p {class:"hint billing-status",role:"status","Checking Google Play…"}
+                p {class:"hint billing-status",role:"status",if cfg!(target_os = "ios") {"Checking the App Store…"} else {"Checking Google Play…"}}
             }
             hr {class:"advertising-divider"}
             p {class:"hint","Watch an optional rewarded ad to hide all ads on this device for 30 minutes. Closing before earning the reward does not activate the benefit."}

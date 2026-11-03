@@ -5,6 +5,7 @@ import tempfile
 import stat
 import struct
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('packaging', Path(__file__).parents[1] / 'embed_ad_frameworks.py')
 packaging = importlib.util.module_from_spec(spec)
@@ -60,6 +61,19 @@ class FrameworkSlices(unittest.TestCase):
 
 
 class PlatformMetadata(unittest.TestCase):
+    def test_toolchain_metadata_comes_from_selected_xcode_and_sdk(self):
+        with tempfile.TemporaryDirectory() as temp:
+            contents = Path(temp) / 'Contents'
+            (contents / 'Developer').mkdir(parents=True)
+            (contents / 'version.plist').write_bytes(plistlib.dumps({
+                'CFBundleShortVersionString': '27.2', 'ProductBuildVersion': '27B52'}))
+            with patch.object(packaging, 'run', side_effect=[
+                str(contents / 'Developer') + '\n', '24B8118\n', '26B123\n']):
+                info = packaging.toolchain_info('iphoneos')
+            self.assertEqual(info, {'DTXcode': '2720', 'DTXcodeBuild': '27B52',
+                                   'DTSDKBuild': '24B8118', 'DTPlatformBuild': '24B8118',
+                                   'BuildMachineOSBuild': '26B123'})
+
     def test_beta_versions_become_valid_numeric_apple_bundle_versions(self):
         original = {'CFBundleVersion': '1.0.0-beta', 'CFBundleShortVersionString': '1.0.0-beta'}
         info = packaging.platform_info(original, 'iphonesimulator', '26.0')
@@ -78,6 +92,14 @@ class PlatformMetadata(unittest.TestCase):
         info = packaging.platform_info({}, 'iphoneos', '26.0')
         self.assertEqual(info['CFBundleSupportedPlatforms'], ['iPhoneOS'])
         self.assertEqual(info['UIDeviceFamily'], [1, 2])
+
+    def test_app_store_bundle_has_type_and_existing_launch_screen_configuration(self):
+        info = packaging.platform_info({'UILaunchStoryboardName': 'LaunchScreen'}, 'iphoneos', '27.2')
+        self.assertEqual(info['CFBundlePackageType'], 'APPL')
+        self.assertEqual(info['MinimumOSVersion'], '15.0')
+        self.assertNotIn('UILaunchStoryboardName', info)
+        self.assertEqual(info['UILaunchScreen'], {})
+        self.assertEqual(info['CFBundleDisplayName'], 'Media Manager')
 
     def test_arm64_does_not_make_a_device_binary_simulator_compatible(self):
         packaging.validate_platform(' platform 7\n', 'iphonesimulator')
@@ -114,6 +136,11 @@ class StaticSDKs(unittest.TestCase):
             self.assertEqual((resources / 'PrivacyInfo.xcprivacy').read_bytes(), b'privacy manifest')
             self.assertFalse((app / 'Frameworks' / 'GoogleMobileAds.framework').exists())
             self.assertFalse((resources / 'GoogleMobileAds').exists())
+            # Signing a copied SDK must not prevent a subsequent packaging pass.
+            (resources / 'PrivacyInfo.xcprivacy').chmod(stat.S_IRUSR)
+            (framework / 'PrivacyInfo.xcprivacy').write_bytes(b'updated manifest')
+            packaging.copy_static_resources(framework, app, 'GoogleMobileAds')
+            self.assertEqual((resources / 'PrivacyInfo.xcprivacy').read_bytes(), b'updated manifest')
 
 
 if __name__ == '__main__':

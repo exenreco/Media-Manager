@@ -21,8 +21,15 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     private var consentInFlight = false
     private var initializing = false
     private static var sdkReady = false
+    private lazy var billing = AdRemovalBilling(
+        publish: { [weak self] value in
+            guard let bytes = try? JSONSerialization.data(withJSONObject: value),
+                  let json = String(data: bytes, encoding: .utf8) else { return }
+            self?.browser?.evaluateJavaScript("window.mediaManagerBillingState?.(\(json))")
+        }, changed: { [weak self] in self?.billingChanged() })
     private lazy var fullscreen: FullscreenAds = FullscreenAds(controller: controller,
-        allowed: { [weak self] in self?.disposed == false && Self.sdkReady && ConsentInformation.shared.canRequestAds && UIApplication.shared.applicationState == .active },
+        allowed: { [weak self] in self?.disposed == false && self?.billing.suppressesAds == false && Self.sdkReady && ConsentInformation.shared.canRequestAds && UIApplication.shared.applicationState == .active },
+        permanentAdFree: { [weak self] in self?.billing.owned == true },
         publish: { [weak self] value in
             var payload = value
             payload["privacyRequired"] = ConsentInformation.shared.privacyOptionsRequirementStatus == .required
@@ -36,6 +43,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         guard let pointer = UnsafeRawPointer(bitPattern: UInt(address)) else { return }
         let host = Unmanaged<UIViewController>.fromOpaque(pointer).takeUnretainedValue()
         controller = host
+        MediaManagerSceneDelegate.adopt(host.view.window)
         disposed = false
         attachBrowser(remaining: 60)
     }
@@ -48,16 +56,24 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
             }
             return
         }
+        // Wry's legacy autoresizing mask includes flexible margins, which can
+        // shrink and offset its WebView when moving the window into a scene.
+        web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        if let parent = web.superview { web.frame = parent.bounds }
         browser = web
         web.configuration.userContentController.add(self, name: "MediaManagerAds")
+        billing.start()
         displayLink = CADisplayLink(target: self, selector: #selector(positionAd))
         displayLink?.add(to: .main, forMode: .common)
         NotificationCenter.default.addObserver(self, selector: #selector(hide),
             name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(resumeBilling),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
     @objc public func detach() {
         disposed = true
+        billing.close()
         fullscreen.close()
         browser?.configuration.userContentController.removeScriptMessageHandler(forName: "MediaManagerAds")
         displayLink?.invalidate(); displayLink = nil
@@ -82,13 +98,32 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
               let command = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return }
         switch command["type"] as? String {
+        case "billing-state": billing.start(); billing.state()
+        case "billing-buy":
+            if UIApplication.shared.applicationState == .active &&
+                !fullscreen.presenting && controller?.presentedViewController == nil {
+                billing.buy()
+            }
+        case "billing-restore":
+            if UIApplication.shared.applicationState == .active &&
+                !fullscreen.presenting && controller?.presentedViewController == nil {
+                billing.refresh(restore: true)
+            }
         case "fullscreen-state":
             fullscreen.state(); fullscreen.load()
-            if !started { started = true; requestConsent() }
+            if !started || !Self.sdkReady { started = true; requestConsent() }
         case "interstitial": fullscreen.show(reward: false)
         case "rewarded":
-            fullscreen.show(reward: true)
-            if !ConsentInformation.shared.canRequestAds { requestConsent() }
+            if billing.suppressesAds {
+                fullscreen.state(billing.owned ? "All ads removed." : "Checking purchase status. Please try again shortly.")
+            } else if !ConsentInformation.shared.canRequestAds {
+                requestConsent()
+            } else if !Self.sdkReady {
+                fullscreen.state("Starting advertising… Please try again shortly.")
+                initializeAds()
+            } else {
+                fullscreen.show(reward: true)
+            }
         case "bounds":
             geometry = command
             positionAd()
@@ -105,17 +140,35 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         }
     }
 
+    @objc private func resumeBilling() { billing.refresh() }
+
+    private func billingChanged() {
+        guard !disposed else { return }
+        if billing.suppressesAds {
+            loader?.delegate = nil; loader = nil; loading = false
+            discardAd(); fullscreen.reset()
+            browser?.evaluateJavaScript("window.mediaManagerAdSetHidden?.(true)")
+            report(billing.owned ? "All ads removed." : "Checking purchase status…")
+        } else {
+            fullscreen.state()
+            if !started || !Self.sdkReady { started = true; requestConsent() }
+            else { loadAd(); fullscreen.load() }
+        }
+    }
+
     private func requestConsent() {
-        guard !disposed, !consentInFlight else { return }
+        guard !disposed, !billing.suppressesAds, !consentInFlight else { return }
         consentInFlight = true
         report("Checking advertising privacy choices…")
+        fullscreen.state("Checking advertising privacy choices…")
         ConsentInformation.shared.requestConsentInfoUpdate(with: RequestParameters()) { [weak self] error in
             guard let self, !self.disposed, let controller = self.controller else { return }
+            guard !self.billing.suppressesAds else { self.consentInFlight = false; return }
             self.updatePrivacyButton()
             guard error == nil else {
                 self.consentInFlight = false
                 if ConsentInformation.shared.canRequestAds { self.initializeAds() }
-                else { self.collapse("Could not check advertising privacy choices. Please retry.") }
+                else { self.consentUnavailable(error) }
                 return
             }
             ConsentForm.loadAndPresentIfRequired(from: controller) { [weak self] error in
@@ -123,9 +176,22 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
                 self.consentInFlight = false
                 self.updatePrivacyButton()
                 if ConsentInformation.shared.canRequestAds { self.initializeAds() }
-                else { self.collapse() }
+                else { self.consentUnavailable(error) }
             }
         }
+    }
+
+    private func consentUnavailable(_ error: Error?) {
+        let message: String
+        if let error {
+            let detail = error as NSError
+            NSLog("MediaManagerAds consent failed: %@", detail.description)
+            message = "Advertising privacy check failed (code \(detail.code)). Check your connection or DNS/content blocker, then try again."
+        } else {
+            message = "Advertising privacy choices do not currently allow ads. Please check your privacy options and try again."
+        }
+        collapse(message)
+        fullscreen.state(message)
     }
 
     private func presentPrivacyOptions() {
@@ -148,7 +214,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     }
 
     private func initializeAds() {
-        guard !disposed, ConsentInformation.shared.canRequestAds else { return }
+        guard !disposed, !billing.suppressesAds, ConsentInformation.shared.canRequestAds else { return }
         if Self.sdkReady { loadAd(); fullscreen.load(); return }
         guard !initializing else { return }; initializing = true
         report("Starting advertising…")
@@ -160,7 +226,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     }
 
     private func loadAd() {
-        guard !disposed, !fullscreen.suppressed, !loading, ad == nil, let controller, ConsentInformation.shared.canRequestAds else { return }
+        guard !disposed, !billing.suppressesAds, !fullscreen.suppressed, !loading, ad == nil, let controller, ConsentInformation.shared.canRequestAds else { return }
         loading = true
         report("Loading advertisement…")
         #if DEBUG
@@ -178,7 +244,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     public func adLoader(_ adLoader: AdLoader, didReceive nativeAd: NativeAd) {
         guard adLoader === loader else { return }
         loading = false
-        guard !disposed, let browser, browser.window != nil else { return }
+        guard !disposed, !billing.suppressesAds, !fullscreen.suppressed, let browser, browser.window != nil else { return }
         discardAd()
         ad = nativeAd
         let view = makeView(nativeAd)
@@ -252,7 +318,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
 
     @objc private func positionAd() {
         guard let view = adView else { return }
-        guard !disposed, !fullscreen.suppressed, UIApplication.shared.applicationState == .active,
+        guard !disposed, !billing.suppressesAds, !fullscreen.suppressed, UIApplication.shared.applicationState == .active,
               controller?.presentedViewController == nil,
               let browser, let window = browser.window, let geometry,
               geometry["visible"] as? Bool == true,

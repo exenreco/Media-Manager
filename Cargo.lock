@@ -5784,7 +5784,7 @@ dependencies = [
 
 [[package]]
 name = "tv-manager-app"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -5806,13 +5806,16 @@ dependencies = [
  "tv-manager-core",
  "tv-manager-server",
  "uuid",
+ "windows 0.61.3",
+ "windows-collections 0.2.0",
+ "windows-future 0.2.1",
  "windows-sys 0.61.2",
  "winreg",
 ]
 
 [[package]]
 name = "tv-manager-core"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5826,6 +5829,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tokio",
  "uuid",
  "walkdir",
  "windows-sys 0.61.2",
@@ -5833,7 +5837,7 @@ dependencies = [
 
 [[package]]
 name = "tv-manager-server"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "axum",

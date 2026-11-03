@@ -19,7 +19,7 @@
   };
   const lock = () => {
     for (const node of [...main.children, ...panel.parentElement.children]) {
-      if (node === panel || node.contains(panel) || node.classList.contains('preview-sheet-backdrop')) continue;
+      if (node === panel || node.contains(panel) || node.classList.contains('preview-sheet-backdrop') || node.classList.contains('workspace-titlebar')) continue;
       if (!inert.has(node)) inert.set(node, node.hasAttribute('inert'));
       node.setAttribute('inert', '');
     }
@@ -28,7 +28,7 @@
     for (const [node, previous] of inert) if (!previous) node.removeAttribute('inert');
     inert.clear();
   };
-  const focusable = () => [...panel.querySelectorAll('button,input,select,textarea,a[href],video[controls],[tabindex="0"]')]
+  const focusable = () => [...main.querySelectorAll('.walkthrough-replay'), ...panel.querySelectorAll('button,input,select,textarea,a[href],video[controls],[tabindex="0"]')]
     .filter(node => !node.disabled && node.getClientRects().length && !node.closest('[inert]'));
   const reset = (restore = true) => {
     clearTimeout(timer); cancelAnimationFrame(frame); drag = null; closing = false;
@@ -81,7 +81,7 @@
     if (target && !panel.contains(target)) trigger = target;
   }, true);
   listen(document, 'keydown', event => {
-    if (!visible) return;
+    if (!visible || document.querySelector('#app-walkthrough')) return;
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismiss(); }
     if (!compact || event.key !== 'Tab') return;
     const nodes = focusable();

@@ -35,9 +35,18 @@ pub fn desktop_config() -> dioxus::desktop::Config {
         .with_window_icon(icon)
         .with_transparent(true)
         .with_background_color((0, 0, 0, 0))
-        .with_decorations(false)
-        .with_resizable(false)
+        .with_decorations(cfg!(target_os = "macos"))
+        .with_resizable(cfg!(target_os = "macos"))
         .with_inner_size(LogicalSize::new(860.0, 540.0));
+    #[cfg(target_os = "macos")]
+    let window = {
+        use dioxus::desktop::tao::platform::macos::WindowBuilderExtMacOS;
+        window
+            .with_titlebar_transparent(true)
+            .with_title_hidden(true)
+            .with_fullsize_content_view(true)
+            .with_traffic_light_inset(dioxus::desktop::tao::dpi::LogicalPosition::new(14.0, 16.0))
+    };
     #[cfg(windows)]
     let window = {
         use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;
@@ -124,16 +133,32 @@ pub fn finish_splash() {
         let size = window
             .current_monitor()
             .map(|m| m.size().to_logical::<f64>(window.scale_factor()));
-        let (width, height) = size.map_or((1280.0, 840.0), |s| {
+        let preferred_height = if cfg!(target_os = "macos") {
+            800.0
+        } else {
+            840.0
+        };
+        let (width, height) = size.map_or((1280.0, preferred_height), |s| {
             (
                 (s.width - 64.0).clamp(480.0, 1280.0),
-                (s.height - 100.0).clamp(400.0, 840.0),
+                (s.height - 100.0).clamp(400.0, preferred_height),
             )
         });
         // Tao's macOS decoration update queues a style mask using the current
         // resizable state. Set it first so that queued update preserves resizing.
         window.set_resizable(true);
-        window.set_decorations(false);
+        window.set_decorations(cfg!(target_os = "macos"));
+        #[cfg(target_os = "macos")]
+        {
+            use dioxus::desktop::tao::platform::macos::WindowExtMacOS;
+            // Keep the native controls integrated with the app toolbar after
+            // leaving the splash and resizing the window.
+            window.set_fullsize_content_view(true);
+            window.set_titlebar_transparent(true);
+            window.set_traffic_light_inset(dioxus::desktop::tao::dpi::LogicalPosition::new(
+                14.0, 16.0,
+            ));
+        }
         #[cfg(windows)]
         set_splash_border(window.window.as_ref(), false);
         window.set_inner_size(LogicalSize::new(width, height));

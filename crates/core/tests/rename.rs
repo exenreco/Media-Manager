@@ -34,6 +34,32 @@ fn write(path: &Path, content: &str) {
     fs::write(path, content).unwrap();
 }
 
+#[tokio::test]
+async fn empty_library_still_builds_metadata_and_artwork_inventory() {
+    let directory = tempdir().unwrap();
+    let request = PlanRequest {
+        name: "Example".into(),
+        season: Some(1),
+        source: Source::Manual {
+            titles: "Pilot".into(),
+        },
+        ..Default::default()
+    };
+    let mut plan = rename::preview(directory.path(), &request).await.unwrap();
+    assert!(!plan.inventory);
+    assert!(plan.tasks.is_empty());
+    assert_eq!(plan.show.name, "Example");
+    assert_eq!(plan.missing.len(), 1);
+    // Supply provider artwork without making a live network request.
+    let poster = "https://example.com/poster.jpg";
+    plan.show.artwork.poster = Some(poster.into());
+    let slots = tv_manager_core::artwork::inventory(&plan).unwrap();
+    assert!(slots
+        .iter()
+        .any(|slot| slot.provider.as_deref() == Some(poster)));
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
 #[test]
 fn edited_filenames_are_preview_only_and_collisions_can_be_resolved() {
     let directory = tempdir().unwrap();

@@ -86,6 +86,7 @@ def copy_static_resources(source, app, name):
     if not resources.resolve().is_relative_to(app.resolve()):
         raise ValueError('Resource destination escapes app bundle')
     resources.mkdir(exist_ok=True)
+    make_writable(resources)
     for item in source.iterdir():
         if item.name in (name, 'Info.plist', 'Headers', 'PrivateHeaders', 'Modules', '_CodeSignature'):
             continue
@@ -116,6 +117,12 @@ def platform_info(info, sdk, version):
     result['DTPlatformVersion'] = version
     result['DTSDKName'] = sdk + version
     result.setdefault('UIDeviceFamily', [1, 2])
+    result.setdefault('MinimumOSVersion', '15.0')
+    result['CFBundlePackageType'] = 'APPL'
+    result['CFBundleDisplayName'] = 'Media Manager'
+    result['CFBundleName'] = 'Media Manager'
+    result.pop('UILaunchStoryboardName', None)
+    result['UILaunchScreen'] = {}
     return result
 
 
@@ -125,6 +132,18 @@ def validate_platform(commands, sdk):
         raise ValueError('Executable platform does not match the requested iOS SDK')
 
 
+def toolchain_info(sdk):
+    developer = Path(run('xcode-select', '-p').strip())
+    with (developer.parent / 'version.plist').open('rb') as source:
+        xcode = plistlib.load(source)
+    components = xcode['CFBundleShortVersionString'].split('.')
+    xcode_number = f'{int(components[0]):02d}{int(components[1]):01d}{int(components[2]) if len(components) > 2 else 0:01d}'
+    sdk_build = run('xcrun', '--sdk', sdk, '--show-sdk-build-version').strip()
+    return {'DTXcode': xcode_number, 'DTXcodeBuild': xcode['ProductBuildVersion'],
+            'DTSDKBuild': sdk_build, 'DTPlatformBuild': sdk_build,
+            'BuildMachineOSBuild': run('sw_vers', '-buildVersion').strip()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
@@ -132,6 +151,7 @@ def main():
     parser.add_argument('--sdk', choices=['iphoneos', 'iphonesimulator'], required=True)
     parser.add_argument('--arch', choices=['arm64', 'x86_64'], default='arm64')
     parser.add_argument('--identity', required=True, help='Apple signing identity; use - for simulator ad-hoc signing')
+    parser.add_argument('--build-number', help='Unique numeric App Store build version')
     args = parser.parse_args()
     if sys.platform != 'darwin':
         parser.error('Embedding/signing requires macOS and Xcode')
@@ -160,6 +180,8 @@ def main():
             copy_static_resources(source, app, name)
             print(f'Preserved {name} resources; static SDK code is linked into the Swift plugin')
         else:
+            if target.exists():
+                make_writable(target)
             shutil.copytree(source, target, dirs_exist_ok=True)
             make_writable(target)
     # SDK frameworks are loaded from the packaged bundle, not SwiftPM build paths.
@@ -170,16 +192,29 @@ def main():
         info = plistlib.load(source)
     with Path(__file__).with_name('Info.plist').open('rb') as source:
         info.update(plistlib.load(source))
+    shutil.copy2(Path(__file__).with_name('PrivacyInfo.xcprivacy'), app / 'PrivacyInfo.xcprivacy')
     executable = (app / info['CFBundleExecutable']).resolve(strict=True)
     if not executable.is_relative_to(app):
         parser.error('App executable must remain inside the bundle')
     validate_platform(run('xcrun', 'otool', '-l', str(executable)), args.sdk)
     version = run('xcrun', '--sdk', args.sdk, '--show-sdk-version').strip()
     info = platform_info(info, args.sdk, version)
+    info.update(toolchain_info(args.sdk))
+    if args.build_number:
+        if not re.fullmatch(r'\d+(?:\.\d+){0,2}', args.build_number):
+            parser.error('--build-number must contain one to three numeric components')
+        info['CFBundleVersion'] = args.build_number
     with (app / 'Info.plist').open('wb') as target:
         plistlib.dump(info, target)
     run(sys.executable, str(Path(__file__).resolve().parents[3] / 'scripts/install_ios_icon.py'),
         '--app', str(app), '--sdk', args.sdk)
+    plugin_info_path = plugin.parent / 'Info.plist'
+    with plugin_info_path.open('rb') as source:
+        plugin_info = plistlib.load(source)
+    # Dioxus emits a 13.0 plist even though this Swift package targets iOS 15.
+    plugin_info['MinimumOSVersion'] = '15.0'
+    with plugin_info_path.open('wb') as target:
+        plistlib.dump(plugin_info, target)
     for framework in sorted(frameworks.glob('*.framework')):
         run('codesign', '--force', '--sign', args.identity, str(framework))
     run('codesign', '--force', '--sign', args.identity,

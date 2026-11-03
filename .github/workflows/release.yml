@@ -310,7 +310,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       MEDIA_MANAGER_PLAY_BUNDLE: 'true'
-      MEDIA_MANAGER_VERSION_CODE: '1000010'
+      MEDIA_MANAGER_VERSION_CODE: '1000011'
       CARGO_PROFILE_RELEASE_DEBUG: '1'
       CARGO_PROFILE_RELEASE_STRIP: 'none'
       RUSTFLAGS: '-C link-arg=-Wl,-z,max-page-size=16384'
@@ -360,7 +360,7 @@ jobs:
           project=$(find target/dx -path '*/gradle/wrapper/gradle-wrapper.properties' -print -quit)
           test -n "$project"
           project="${project%/gradle/wrapper/gradle-wrapper.properties}"
-          (cd "$project" && bash ./gradlew --no-daemon :app:bundleRelease :app:assembleRelease)
+          (cd "$project" && bash ./gradlew --no-daemon :app:bundleRelease :app:assembleRelease :app:testReleaseUnitTest)
           mkdir -p dist target/android-signing-tools
           apk=$(find target/dx -path '*/outputs/apk/release/*.apk' -type f | head -n 1)
           bundle=$(find target/dx -path '*/outputs/bundle/release/*.aab' -type f | head -n 1)

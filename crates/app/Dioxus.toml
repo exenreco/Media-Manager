@@ -24,6 +24,8 @@ publisher = "Media Manager"
 deployment_target = "15.0"
 
 [ios.plist]
+UIApplicationSceneManifest = { UIApplicationSupportsMultipleScenes = false, UISceneConfigurations = { UIWindowSceneSessionRoleApplication = [{ UISceneConfigurationName = "Media Manager", UISceneClassName = "UIWindowScene", UISceneDelegateClassName = "MediaManagerSceneDelegate" }] } }
+MediaManagerRemoveAdsProductID = "remove_ads"
 NSCameraUsageDescription = "Scan a Media Manager desktop QR code to pair this device."
 NSLocalNetworkUsageDescription = "Connect to your paired desktop media library on the local network."
 LSSupportsOpeningDocumentsInPlace = true

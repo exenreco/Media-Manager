@@ -10,6 +10,7 @@ authors.workspace = true
 default = ["desktop"]
 desktop = ["dioxus/desktop", "dep:rfd"]
 mobile = ["dioxus/mobile"]
+mac-app-store = ["desktop"]
 
 [dependencies]
 anyhow.workspace = true
@@ -27,6 +28,9 @@ qrcode = { version = "0.14", default-features = false }
 rqrr = "0.10"
 
 [target.'cfg(windows)'.dependencies]
+windows-collections = "0.2.0"
+windows-future = "0.2.1"
+windows = { version = "0.61.3", features = ["Services_Store", "Foundation_Collections", "Win32_Foundation", "Win32_UI_Shell", "Win32_System_WinRT"] }
 winreg = "0.55"
 windows-sys = { version = "0.61", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_UI_Shell", "Win32_Graphics_Dwm"] }
 

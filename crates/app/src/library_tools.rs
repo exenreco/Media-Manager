@@ -212,7 +212,7 @@ pub fn HealthDashboard(
     let mut scan_error = use_signal(String::new);
     let pending_scan =
         use_hook(|| std::rc::Rc::new(std::cell::RefCell::new(None::<dioxus::core::Task>)));
-    use_effect(move || {
+    use_effect(use_reactive!(|(changed,)| {
         let current = plan();
         let _details = form();
         let c = connection();
@@ -235,7 +235,7 @@ pub fn HealthDashboard(
             }
             scanning.set(false);
         }));
-    });
+    }));
     rsx! {section {class:"library-tools health-dashboard","aria-busy":(scanning() || busy() || refreshing).to_string(),
         if scanning() || busy() || refreshing {crate::workspace::PageSpinner {label:if refreshing {"Updating library…"}else if scanning(){"Scanning library health…"}else{"Working…"}}}
         div {class:"health-card",

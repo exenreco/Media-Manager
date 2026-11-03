@@ -253,9 +253,8 @@ pub fn inventory(root: &Path, relative: &str) -> Result<RenamePlan> {
 pub async fn preview(root: &Path, request: &PlanRequest) -> Result<RenamePlan> {
     let folder = scoped_folder(root, &request.folder)?;
     let files = media_files(&folder)?;
-    if files.is_empty() {
-        bail!("No supported video or .txt files found");
-    }
+    // Metadata and artwork remain useful before media files are added. An empty
+    // folder produces no file rename tasks, but still has provider poster slots.
     let show = metadata::lookup(request, files.len()).await?;
     build_plan(&folder, request, show, &files)
 }

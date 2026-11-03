@@ -13,10 +13,10 @@
     document.documentElement.dataset.adsPaused = String(free);
     document.querySelectorAll('.ad-privacy').forEach(button => { button.hidden = !state.privacyRequired; });
     document.querySelectorAll('.ad-rewarded').forEach(button => {
-      button.disabled = free || state.presenting || !!window.mediaManagerBillingPresenting;
-      button.textContent = paid ? 'Ads removed' : free ? 'Ad-free time is active' : 'Watch an ad — 30 minutes without ads';
+      button.disabled = free || state.presenting || !!state.rewardedLoading || !!window.mediaManagerBillingPresenting;
+      button.textContent = paid ? 'Ads removed' : free ? 'Ad-free time is active' : state.rewardedLoading ? 'Loading rewarded ad…' : 'Watch an ad — 30 minutes without ads';
     });
-    const message = paid ? 'All ads have been removed on Android.' : free ? `Ads paused for ${Math.ceil((state.adFreeUntil-Date.now())/60000)} more minutes on this device.` :
+    const message = paid ? 'All ads have been removed.' : free ? `Ads paused for ${Math.ceil((state.adFreeUntil-Date.now())/60000)} more minutes on this device.` :
       state.message || (state.rewardedReady ? 'Rewarded ad ready. Watching is optional.' : 'A rewarded ad is not ready yet. Tap to check availability.');
     document.querySelectorAll('.fullscreen-ad-status').forEach(label => { label.textContent = message; });
   };
@@ -27,7 +27,7 @@
     requestAnimationFrame(() => { if (!blocked() && !window.mediaManagerAdsSuppressed) send('interstitial'); });
   };
   const action = event => {
-    if (event.target.closest('.ad-rewarded') && !blocked() && !window.mediaManagerAdsSuppressed) send('rewarded');
+    if (event.target.closest('.ad-rewarded') && !state.rewardedLoading && !blocked() && !window.mediaManagerAdsSuppressed) send('rewarded');
   };
   const tick = () => {
     if (stopped) return;
