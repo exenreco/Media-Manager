@@ -1,6 +1,6 @@
-## Current release: 1.0.3
+## Current Android hotfix: 1.0.3 (1000012)
 
-The current ARM64 rebuild uses version code **1000011** and includes the shared interactive walkthrough and latest app features. The release workflow builds APK/AAB files and matching native symbols. CI outputs are unsigned; use the existing private upload/signing key locally before installation or Play upload. Older build records below describe historical artifacts.
+The current ARM64 rebuild uses version code **1000012** and includes the shared interactive walkthrough and latest app features. The release workflow builds APK/AAB files and matching native symbols. CI outputs are unsigned; use the existing private upload/signing key locally before installation or Play upload. See [Android window/preview hotfix validation](ANDROID_WINDOW_HOTFIX.md) for the exact production run, remaining SDK warning and device acceptance limits. Older build records below describe historical artifacts.
 
 # Android Play upload builds
 

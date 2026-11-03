@@ -67,6 +67,8 @@ validation is still pending. Mobile background jobs and notifications remain unf
 
 Download [Media Manager 1.0.3](https://github.com/exenreco/Media-Manager/releases/tag/v1.0.3).
 
+For Android preview and safe-area fixes, use [hotfix build 1000012](docs/ANDROID_WINDOW_HOTFIX.md). The tagged v1.0.3 Android assets predate this hotfix; its new APK/AAB require private signing.
+
 The beta release includes Windows setup, macOS PKG and Linux DEB installers
 alongside portable downloads and the managed Linux Flatpak. See [desktop installation](docs/INSTALLATION.md)
 for setup, upgrade, removal, and runtime requirements.
@@ -147,7 +149,7 @@ release AAB targeting API 36, retains native Rust symbols, and exports a matchin
 `native-debug-symbols.zip`. Sign privately with
 [scripts/sign_android_bundle.ps1](scripts/sign_android_bundle.ps1); never publish
 upload keys or passwords. See [Android release builds](docs/ANDROID_RELEASE.md).
-The 1.0.3 Android build uses version code 1000011. Pending approval, restore, refund/revocation and decline passed live emulator testing with the configured purchase service; see [Android billing validation](docs/ANDROID_BILLING.md).
+The 1.0.3 Android hotfix uses version code 1000012. Pending approval, restore, refund/revocation and decline passed live emulator testing with the configured purchase service; see [Android billing validation](docs/ANDROID_BILLING.md).
 
 Android compatibility playback uses bundled LibVLC; iOS uses VLCKit. Desktop and
 paired compatibility conversion needs FFmpeg installed on the library host.
