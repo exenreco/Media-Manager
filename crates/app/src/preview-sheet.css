@@ -5,8 +5,8 @@ main[data-sheet-mode=true] .right-resizer{display:none!important}
 main[data-sheet-mode=true][data-view=inspector] .layout>.center-column{display:grid!important}
 main[data-sheet-mode=true][data-view=posters] .layout>.artwork-panel{display:grid!important}
 main[data-sheet-mode=true] .layout>.preview-sheet{
- display:none!important;position:fixed;z-index:51;left:50%;bottom:0;top:auto;
- width:min(720px,100%);height:auto;max-height:calc(var(--preview-viewport,100dvh) - max(env(safe-area-inset-top,0px),var(--native-safe-top,24px)) - 14px);
+ display:none!important;position:fixed;z-index:51;left:calc(50% + (var(--native-safe-left,0px) - var(--native-safe-right,0px))/2);bottom:0;top:auto;
+ width:min(720px,calc(100% - var(--native-safe-left,0px) - var(--native-safe-right,0px)));height:auto;max-height:calc(var(--preview-viewport,100dvh) - max(env(safe-area-inset-top,0px),var(--native-safe-top,24px)) - 14px);
  padding:0;border:1px solid #292929;border-bottom:0;border-radius:32px 32px 0 0;
  background:#080808;box-shadow:0 -16px 80px #0008;overflow:hidden;
  transform:translate3d(-50%,105%,0);animation:none;

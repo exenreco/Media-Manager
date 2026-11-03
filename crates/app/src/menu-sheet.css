@@ -11,7 +11,7 @@
 .controls .menu-sheet-close{position:absolute;right:16px;top:16px;width:32px;height:32px;padding:0;display:grid;place-items:center;border-radius:50%;background:#232323;color:#eee}
 .menu-sheet-footer{margin-top:22px}
 .menu-sheet-content .ordering-group{margin-bottom:0}
-.menu-sheet[data-sheet=true]{inset:auto 0 0;margin:0 auto;width:min(720px,100%);max-height:calc(var(--preview-viewport,100dvh) - max(env(safe-area-inset-top,0px),var(--native-safe-top,24px)) - 14px);padding:0;border:1px solid #292929;border-bottom:0;border-radius:32px 32px 0 0;background:#080808;box-shadow:0 -16px 80px #0008;overflow:hidden;transform:translateY(105%);transition:transform .58s cubic-bezier(.18,.95,.25,1.08);animation:none!important}
+.menu-sheet[data-sheet=true]{inset:auto var(--native-safe-right,0px) 0 var(--native-safe-left,0px);margin:0 auto;width:min(720px,calc(100% - var(--native-safe-left,0px) - var(--native-safe-right,0px)));max-height:calc(var(--preview-viewport,100dvh) - max(env(safe-area-inset-top,0px),var(--native-safe-top,24px)) - 14px);padding:0;border:1px solid #292929;border-bottom:0;border-radius:32px 32px 0 0;background:#080808;box-shadow:0 -16px 80px #0008;overflow:hidden;transform:translateY(105%);transition:transform .58s cubic-bezier(.18,.95,.25,1.08);animation:none!important}
 .menu-sheet[data-sheet=true][open]{display:flex;flex-direction:column}
 .menu-sheet[data-sheet=true][data-state=open],.menu-sheet[data-sheet=true][data-state=dragging]{transform:translateY(var(--sheet-drag,0px))}
 .menu-sheet[data-sheet=true][data-state=dragging]{transition:none}
@@ -48,7 +48,7 @@ main.mobile-app .mobile-dock{background:transparent;border-color:transparent;box
 /* Both popup types use the same shell, including dialog UA-style resets. */
 :is(main[data-sheet-mode=true] .sheet-surface,.sheet-surface[data-sheet=true]){
  box-sizing:border-box;left:50%;right:auto;bottom:0;top:auto;margin:0;
- width:min(720px,100%);max-width:none;min-width:0;min-height:0;
+ width:min(720px,calc(100% - var(--native-safe-left,0px) - var(--native-safe-right,0px)));max-width:none;min-width:0;min-height:0;
  max-height:calc(var(--preview-viewport,100dvh) - max(env(safe-area-inset-top,0px),var(--native-safe-top,24px)) - 14px);
  padding:0;border:1px solid #292929;border-bottom:0;border-radius:32px 32px 0 0;
  background:#080808;color:#e9e9e9;box-shadow:0 -16px 80px #0008;

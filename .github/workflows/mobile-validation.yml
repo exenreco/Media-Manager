@@ -120,6 +120,7 @@ jobs:
           disable-animations: true
           script: |
             python3 scripts/mobile_smoke.py --platform android --app "$SMOKE_APK" --evidence target/mobile-validation/android
+            python3 scripts/android_window_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --evidence target/mobile-validation/android/window
             python3 scripts/android_playback_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --inline --codec h264 --evidence target/mobile-validation/android/h264-inline
             python3 scripts/android_playback_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --inline --codec h264-10bit --evidence target/mobile-validation/android/h264-10bit-inline
             python3 scripts/android_playback_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --codec h264 --cycles 3 --evidence target/mobile-validation/android/h264-popup
@@ -134,6 +135,7 @@ jobs:
           disable-animations: true
           script: |
             python3 scripts/mobile_smoke.py --platform android --app "$SMOKE_APK" --evidence target/mobile-validation/android/tablet
+            python3 scripts/android_window_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --evidence target/mobile-validation/android/tablet/window
             python3 scripts/android_playback_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --inline --codec h264 --evidence target/mobile-validation/android/tablet/h264-inline
             python3 scripts/android_playback_smoke.py --adb "$ANDROID_HOME/platform-tools/adb" --codec h264 --cycles 3 --evidence target/mobile-validation/android/tablet/h264-popup
       - uses: actions/upload-artifact@v4

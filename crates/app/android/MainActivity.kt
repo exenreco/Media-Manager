@@ -78,6 +78,16 @@ class MainActivity : WryActivity() {
         }
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateSafeArea(webView) }
         webView.post { androidx.core.view.ViewCompat.requestApplyInsets(webView) }
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("media_manager_window_fixture",false)) {
+            val audit = object : Runnable {
+                override fun run() {
+                    if (dead) return
+                    updateSafeArea(webView)
+                    timer.postDelayed(this, 500)
+                }
+            }
+            timer.postDelayed(audit, 1500)
+        }
         mediaPreviews.attach(webView)
         // Disposable private fixture, used only by the native playback acceptance harness.
         if(BuildConfig.DEBUG && intent.getBooleanExtra("media_manager_preview_fixture",false)) {
@@ -174,6 +184,18 @@ class MainActivity : WryActivity() {
             "document.documentElement.style.setProperty('--native-safe-$edge','${pixels / density}px')"
         }
         web.evaluateJavascript(script, null)
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("media_manager_window_fixture",false)) {
+            // Test-only geometry from the actual WebView after CSS has settled.
+            web.evaluateJavascript("""(() => {
+                const box = selector => { const e=document.querySelector(selector); if(!e)return null;
+                    const r=e.getBoundingClientRect(); return {left:r.left,top:r.top,right:r.right,bottom:r.bottom}; };
+                const edge = name => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--native-safe-'+name)) || 0;
+                return {width:innerWidth,height:innerHeight,safe:{left:edge('left'),top:edge('top'),right:edge('right'),bottom:edge('bottom')},
+                    toolbar:box('.workspace-titlebar'),dock:box('.mobile-dock')};
+            })()""") { json ->
+                runCatching { java.io.File(filesDir,"window-insets-fixture.json").writeText(json) }
+            }
+        }
     }
 
     private fun requestConsent() {
