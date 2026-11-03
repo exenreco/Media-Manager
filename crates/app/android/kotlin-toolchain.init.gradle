@@ -8,6 +8,15 @@ gradle.beforeProject { project ->
         if (!iconPath || !new File(iconPath).isDirectory()) {
             throw new GradleException('Set MEDIA_MANAGER_ANDROID_ICONS to assets/branding/icons/android')
         }
+        // Dioxus adds Material Components by default, but this app uses only
+        // AppCompat and native Android widgets. Remove that unused direct
+        // dependency (including DatePicker's legacy system-bar calls). A real
+        // transitive requirement remains eligible for normal resolution.
+        project.afterEvaluate {
+            project.configurations.getByName('implementation').dependencies.removeAll {
+                it.group == 'com.google.android.material' && it.name == 'material'
+            }
+        }
         def android = project.extensions.getByName('android')
         def billingProduct = System.getenv('MEDIA_MANAGER_AD_FREE_PRODUCT') ?: 'remove_ads'
         if (!(billingProduct ==~ /[a-z0-9][a-z0-9._]{0,99}/)) {
