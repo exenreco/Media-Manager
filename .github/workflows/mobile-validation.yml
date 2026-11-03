@@ -90,6 +90,10 @@ jobs:
           mkdir -p target/mobile-validation/android
           cp "$apk" target/mobile-validation/android/${{ matrix.apk }}
           echo "SMOKE_APK=$GITHUB_WORKSPACE/target/mobile-validation/android/${{ matrix.apk }}" >> "$GITHUB_ENV"
+      - name: Verify merged activity window configuration
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$SMOKE_APK" > target/mobile-validation/android/AndroidManifest.xml
+          python3 scripts/verify_android_manifest.py target/mobile-validation/android/AndroidManifest.xml
       - name: Test native purchase receipt signatures
         if: matrix.target == 'x86_64-linux-android'
         run: |
