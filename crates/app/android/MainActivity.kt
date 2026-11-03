@@ -102,7 +102,7 @@ class MainActivity : WryActivity() {
                         if (inline) {
                             mediaPreviews.inline(JSONObject().put("source",source).put("visible",true)
                                 .put("x",16).put("y",160).put("width",webView.width-32)
-                                .put("height",webView.width*0.6).put("viewportWidth",webView.width),webView)
+                                .put("height",minOf(webView.width*0.6, (webView.height-192).toDouble()).coerceAtLeast(1.0)).put("viewportWidth",webView.width),webView)
                         } else mediaPreviews.play(source)
                         if (remaining > 1) timer.postDelayed({
                             mediaPreviews.dismiss()
