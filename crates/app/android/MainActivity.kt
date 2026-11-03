@@ -31,6 +31,14 @@ import kotlin.math.roundToInt
 
 typealias BuildConfig = com.tvshowmanager.app.BuildConfig
 
+private fun prepareEdgeToEdge(window: android.view.Window) {
+    // targetSdk 36 enforces this on API 35+. The AndroidX helper still writes
+    // legacy bar colors, so use it only where backward compatibility needs it.
+    if (android.os.Build.VERSION.SDK_INT < 35) {
+        androidx.core.view.WindowCompat.enableEdgeToEdge(window)
+    }
+}
+
 /** Native ad assets never enter the WebView; the SDK owns clicks and impressions. */
 class MainActivity : WryActivity() {
     private val mediaPreviews by lazy { MediaPreviews(this) }
@@ -62,7 +70,7 @@ class MainActivity : WryActivity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        androidx.core.view.WindowCompat.enableEdgeToEdge(window)
+        prepareEdgeToEdge(window)
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
@@ -662,7 +670,7 @@ private class LocalStorage(private val activity: MainActivity, private val media
 class PairingCaptureActivity : com.journeyapps.barcodescanner.CaptureActivity() {
     override fun onCreate(state: android.os.Bundle?) {
         super.onCreate(state)
-        androidx.core.view.WindowCompat.enableEdgeToEdge(window)
+        prepareEdgeToEdge(window)
         val content = findViewById<View>(android.R.id.content)
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
             val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
@@ -1302,7 +1310,7 @@ private class CompatiblePreview(
     val inline get() = inlineWeb != null
     val isClosed get() = closed
     private var root: LinearLayout? = null
-    private val dialog = android.app.Dialog(activity)
+    private val dialog = android.app.Dialog(activity, android.R.style.Theme_Material_NoActionBar)
     private val server = java.net.ServerSocket(0, 4, java.net.InetAddress.getByName("127.0.0.1"))
     private val workers = java.util.concurrent.ThreadPoolExecutor(2,2,0L,java.util.concurrent.TimeUnit.SECONDS,java.util.concurrent.ArrayBlockingQueue<Runnable>(4))
     private val sockets = java.util.Collections.synchronizedSet(mutableSetOf<java.net.Socket>())
@@ -1342,7 +1350,7 @@ private class CompatiblePreview(
             dialog.setContentView(column);dialog.setOnDismissListener {close()}
             dialog.show();dialog.window?.setLayout(-1,-1)
             dialog.window?.let { window ->
-                androidx.core.view.WindowCompat.enableEdgeToEdge(window)
+                prepareEdgeToEdge(window)
                 androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(column) { view, insets ->
                     val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
                         androidx.core.view.WindowInsetsCompat.Type.displayCutout())
