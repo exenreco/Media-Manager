@@ -12,6 +12,7 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     private var loader: AdLoader?
     private var ad: NativeAd?
     private var adView: NativeAdView?
+    private var adClip: UIView?
     private var displayLink: CADisplayLink?
     private var expiry: Timer?
     private var geometry: [String: Any]?
@@ -249,7 +250,11 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
         ad = nativeAd
         let view = makeView(nativeAd)
         adView = view
-        browser.window?.addSubview(view)
+        let clip = UIView()
+        clip.clipsToBounds = true
+        clip.addSubview(view)
+        adClip = clip
+        browser.window?.addSubview(clip)
         browser.evaluateJavaScript("window.mediaManagerAdSetHidden?.(false)")
         expiry = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in self?.discardAd(); self?.collapse() }
@@ -326,21 +331,28 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
               viewport.isFinite && viewport > 0 else { hide(); return }
         let names = ["x", "y", "width", "height"]
         let values = names.compactMap { geometry[$0] as? Double }
-        guard values.count == 4, values.allSatisfy({ $0.isFinite && $0 >= 0 && $0 < 100_000 })
+        guard values.count == 4, values.allSatisfy({ $0.isFinite && abs($0) < 100_000 })
         else { hide(); return }
         let scale = browser.bounds.width / CGFloat(viewport)
         let rect = CGRect(x: CGFloat(values[0]) * scale, y: CGFloat(values[1]) * scale,
                           width: CGFloat(values[2]) * scale, height: CGFloat(values[3]) * scale)
-        guard rect.width >= 239, rect.height >= 379, browser.bounds.insetBy(dx: -1, dy: -1).contains(rect)
+        let clipValues = ["clipX", "clipY", "clipWidth", "clipHeight"].compactMap { geometry[$0] as? Double }
+        guard clipValues.count == 4, clipValues.allSatisfy({ $0.isFinite && $0 >= 0 && $0 < 100_000 }) else { hide(); return }
+        let clipRect = CGRect(x: CGFloat(clipValues[0]) * scale, y: CGFloat(clipValues[1]) * scale,
+                              width: CGFloat(clipValues[2]) * scale, height: CGFloat(clipValues[3]) * scale)
+        guard rect.width >= 239, rect.height >= 379, clipRect.width > 0, clipRect.height > 0,
+              browser.bounds.insetBy(dx: -1, dy: -1).contains(clipRect), rect.insetBy(dx: -1, dy: -1).contains(clipRect)
         else { hide(); return }
         let compact = rect.height < 440
         view.advertiserView?.isHidden = compact || ad?.advertiser == nil
         view.bodyView?.isHidden = compact || ad?.body == nil
-        view.frame = browser.convert(rect, to: window)
+        adClip?.frame = browser.convert(clipRect, to: window)
+        view.frame = CGRect(x: rect.minX - clipRect.minX, y: rect.minY - clipRect.minY, width: rect.width, height: rect.height)
+        adClip?.isHidden = false
         view.isHidden = false
     }
 
-    @objc private func hide() { adView?.isHidden = true }
+    @objc private func hide() { adView?.isHidden = true; adClip?.isHidden = true }
     private func report(_ message: String, retry: Bool = false) {
         guard let bytes = try? JSONSerialization.data(withJSONObject: [message]),
               let array = String(data: bytes, encoding: .utf8) else { return }
@@ -353,6 +365,6 @@ public final class MediaManagerAds: NSObject, WKScriptMessageHandler, NativeAdLo
     }
     private func discardAd() {
         expiry?.invalidate(); expiry = nil
-        adView?.removeFromSuperview(); adView?.nativeAd = nil; adView = nil; ad = nil
+        adView?.removeFromSuperview(); adClip?.removeFromSuperview(); adClip = nil; adView?.nativeAd = nil; adView = nil; ad = nil
     }
 }

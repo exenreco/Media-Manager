@@ -724,6 +724,7 @@ fn App() -> Element {
                                 button {class:"primary welcome-continue",onclick:move|_|navigate.call("naming"),if busy(){"Checking…"}else{"Open workspace →"}}
                                 p {class:"hint",role:"status","{message}"}
                             }
+                            if cfg!(any(target_os = "android", target_os = "ios")) {ads::NativeAdSlot {placement:"welcome"}}
                         }
                     }
                 }
