@@ -54,6 +54,7 @@ class MainActivity : WryActivity() {
     private fun fullscreenSuppressed(): Boolean = fullscreen.suppressed || billing.suppressesAds
     private var browser: WebView? = null
     private var adView: NativeAdView? = null
+    private var adClip: FrameLayout? = null
     private var nativeAd: NativeAd? = null
     private var consent: ConsentInformation? = null
     private var bounds: JSONObject? = null
@@ -265,7 +266,8 @@ class MainActivity : WryActivity() {
                     loadedAt = android.os.SystemClock.elapsedRealtime()
                     timer.postDelayed(expireAd, 3_600_000)
                     adView = makeAdView(ad)
-                    findViewById<FrameLayout>(android.R.id.content).addView(adView)
+                    adClip = FrameLayout(this).apply { clipChildren = true; clipToPadding = true; addView(adView) }
+                    findViewById<FrameLayout>(android.R.id.content).addView(adClip)
                     browser?.evaluateJavascript(
                         "window.mediaManagerAdSetHidden?.(false)", null)
                     report("")
@@ -353,11 +355,11 @@ class MainActivity : WryActivity() {
         if (!viewport.isFinite() || viewport <= 0) { view.visibility = View.GONE; return }
         val scale = web.width.toDouble() / viewport
         val values = listOf("x", "y", "width", "height").map { rect.optDouble(it, Double.NaN) * scale }
-        if (values.any { !it.isFinite() || it < 0 || it > 100_000 }) {
+        if (values.any { !it.isFinite() || kotlin.math.abs(it) > 100_000 }) {
             view.visibility = View.GONE; return
         }
         val (x, y, width, height) = values.map { it.roundToInt() }
-        if (width < dp(240) || height < dp(380) || x + width > web.width || y + height > web.height) {
+        if (width < dp(240) || height < dp(380)) {
             view.visibility = View.GONE; return
         }
         val compact = height < dp(440)
@@ -366,9 +368,17 @@ class MainActivity : WryActivity() {
         val parent = findViewById<FrameLayout>(android.R.id.content)
         val webOrigin = IntArray(2); val parentOrigin = IntArray(2)
         web.getLocationInWindow(webOrigin); parent.getLocationInWindow(parentOrigin)
+        val clipping = listOf("clipX", "clipY", "clipWidth", "clipHeight").map { rect.optDouble(it, Double.NaN) * scale }
+        if (clipping.any { !it.isFinite() || it < 0 || it > 100_000 }) { view.visibility = View.GONE; return }
+        val (cx, cy, cw, ch) = clipping.map { it.roundToInt() }
+        if (cw <= 0 || ch <= 0 || cx + cw > web.width + 1 || cy + ch > web.height + 1 ||
+            cx < x - 1 || cy < y - 1 || cx + cw > x + width + 1 || cy + ch > y + height + 1) { view.visibility = View.GONE; return }
+        adClip?.layoutParams = FrameLayout.LayoutParams(cw, ch).apply {
+            leftMargin = webOrigin[0] - parentOrigin[0] + cx
+            topMargin = webOrigin[1] - parentOrigin[1] + cy
+        }
         view.layoutParams = FrameLayout.LayoutParams(width, height).apply {
-            leftMargin = webOrigin[0] - parentOrigin[0] + x
-            topMargin = webOrigin[1] - parentOrigin[1] + y
+            leftMargin = x - cx; topMargin = y - cy
         }
         view.visibility = View.VISIBLE
     }
@@ -387,6 +397,7 @@ class MainActivity : WryActivity() {
     private fun discardAd() {
         timer.removeCallbacks(expireAd)
         adView?.let { (it.parent as? android.view.ViewGroup)?.removeView(it); it.destroy() }
+        adClip?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }; adClip = null
         adView = null
         nativeAd?.destroy(); nativeAd = null
     }

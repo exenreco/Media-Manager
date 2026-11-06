@@ -14,22 +14,25 @@
     const r = slot.getBoundingClientRect();
     let eligible = !window.mediaManagerAdsSuppressed && !document.hidden && !slot.hidden && !document.querySelector('.overlay') && !document.querySelector('main[data-preview-sheet]') && !document.querySelector('.ordering-dialog[open]') && !document.querySelector('.mobile-dock.expanded') && !document.querySelector('.connection-island[data-state=warning]') && !document.querySelector('.connection-island[data-state=match]') &&
       r.width >= 240 && r.height >= 379 && r.bottom > 0 && r.top < innerHeight;
-    let visible = eligible && r.top >= -1 && r.left >= -1 && r.bottom <= innerHeight + 1 && r.right <= innerWidth + 1;
-    const dock = document.querySelector('.mobile-dock');
-    if (dock && visible && getComputedStyle(dock).display !== 'none') {
-      const bounds = dock.getBoundingClientRect();
-      visible = r.bottom <= bounds.top || r.top >= bounds.bottom || r.right <= bounds.left || r.left >= bounds.right;
-    }
+    // Keep the ad's full layout, but expose only its scroll-clipped viewport.
+    const clip = {left:Math.max(0,r.left), top:Math.max(0,r.top), right:Math.min(innerWidth,r.right), bottom:Math.min(innerHeight,r.bottom)};
     for (let p = slot.parentElement; p; p = p.parentElement) {
       const style = getComputedStyle(p);
-      if (style.display === 'none' || style.visibility === 'hidden') { eligible = false; visible = false; }
+      if (style.display === 'none' || style.visibility === 'hidden') eligible = false;
       if (/(auto|scroll|hidden|clip)/.test(style.overflow + style.overflowY + style.overflowX)) {
         const b = p.getBoundingClientRect();
-        eligible = eligible && r.bottom > b.top && r.top < b.bottom && b.bottom - b.top >= 379;
-        visible = visible && r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.left >= b.left - 1 && r.right <= b.right + 1;
+        clip.left=Math.max(clip.left,b.left); clip.top=Math.max(clip.top,b.top);
+        clip.right=Math.min(clip.right,b.right); clip.bottom=Math.min(clip.bottom,b.bottom);
       }
     }
-    return {r, eligible, visible};
+    const dock = document.querySelector('.mobile-dock');
+    if (eligible && dock && getComputedStyle(dock).display !== 'none') {
+      const bounds=dock.getBoundingClientRect();
+      if (clip.right>bounds.left && clip.left<bounds.right && clip.bottom>bounds.top && clip.top<bounds.bottom) clip.bottom=Math.min(clip.bottom,bounds.top);
+    }
+    eligible = eligible && clip.right>clip.left && clip.bottom>clip.top;
+    const visible = eligible;
+    return {r, eligible, visible, clip};
   };
   const send = data => bridge?.postMessage(JSON.stringify(data));
   function update() {
@@ -49,9 +52,9 @@
       }
       frame = requestAnimationFrame(update); return;
     }
-    if (waiting) { window.mediaManagerAdSetHidden(false); waiting = false; status('Waiting for an advertisement…'); }
-    const {r, eligible, visible} = geometry(slot);
-    const message = JSON.stringify({type:'bounds', placement:slot.id, eligible, visible, x:r.x, y:r.y, width:r.width, height:r.height, viewportWidth:innerWidth});
+    if (waiting) { window.mediaManagerAdSetHidden(false); waiting = false; status('Waiting for an advertisementâ€¦'); }
+    const {r, eligible, visible, clip} = geometry(slot);
+    const message = JSON.stringify({type:'bounds', placement:slot.id, eligible, visible, x:r.x, y:r.y, width:r.width, height:r.height, clipX:clip.left, clipY:clip.top, clipWidth:Math.max(0,clip.right-clip.left), clipHeight:Math.max(0,clip.bottom-clip.top), viewportWidth:innerWidth});
     if (message !== previous) { bridge.postMessage(message); previous = message; }
     frame = requestAnimationFrame(update);
   }
@@ -59,7 +62,7 @@
     if (e.target.closest('.ad-privacy')) send({type:'privacy'});
     if (e.target.closest('.ad-retry')) {
       attempts = 0; previous = ''; window.mediaManagerAdSetHidden(false);
-      status('Retrying advertisement…');
+      status('Retrying advertisementâ€¦');
       cancelAnimationFrame(frame);
       if (bridge) { update(); send({type:'retry'}); }
       else { cancelAnimationFrame(frame); update(); }

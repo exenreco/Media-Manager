@@ -64,11 +64,12 @@ test('three page placements share one native view and follow whichever page is v
   assert.equal(h.messages.at(-1).placement,'native-ad-slot-details');
 });
 
-test('hides the native overlay under dialogs, scrolling clips, and backgrounding', () => {
+test('clips the native overlay during scroll and hides it under dialogs or in background', () => {
   const h = harness();
   h.modal(true); h.tick(); assert.equal(h.messages.at(-1).visible, false);
   h.modal(false); h.tick(); assert.equal(h.messages.at(-1).visible, true);
-  h.parentRect.bottom = 400; h.tick(); assert.equal(h.messages.at(-1).visible, false);
+  h.parentRect.bottom = 400; h.tick(); assert.equal(h.messages.at(-1).visible, true);
+  assert.equal(h.messages.at(-1).clipY+h.messages.at(-1).clipHeight,400);
   h.parentRect.bottom = 800; h.tick(); assert.equal(h.messages.at(-1).visible, true);
   h.document.hidden = true; h.tick(); assert.equal(h.messages.at(-1).visible, false);
 });
@@ -95,11 +96,13 @@ test('uses the iOS WebKit handler for geometry, privacy and teardown', () => {
   assert.equal(h.messages.at(-1).type, 'hide');
 });
 
-test('loads an eligible clipped slot but keeps its native overlay hidden', () => {
+test('keeps a partially scrolled ad visible with a clipped viewport', () => {
   const h=harness(); h.rect.bottom=850; h.rect.top=410; h.rect.y=410; h.tick();
   assert.equal(h.messages.at(-1).eligible,true);
-  assert.equal(h.messages.at(-1).visible,false);
+  assert.equal(h.messages.at(-1).visible,true);
+  assert.equal(h.messages.at(-1).clipHeight,390);
 });
+
 test('waits for a late native bridge instead of permanently hiding the slot', () => {
   const h=harness({bridge:false}); h.tick(); h.installBridge(); h.tick();
   assert.equal(h.slot.hidden,false); assert.equal(h.messages.at(-1).eligible,true);
@@ -143,7 +146,8 @@ test('floating navigation and expanded tools cannot be covered by a native ad', 
   const dock = {getBoundingClientRect:() => ({top:400,bottom:780,left:20,right:380})};
   let expanded = false;
   h.document.querySelector = selector => selector === '.mobile-dock' ? dock : selector === '.mobile-dock.expanded' && expanded ? {} : null;
-  h.tick(); assert.equal(h.messages.at(-1).visible, false);
+  h.tick(); assert.equal(h.messages.at(-1).visible, true);
+  assert.equal(h.messages.at(-1).clipY+h.messages.at(-1).clipHeight,400);
   h.rect.bottom=390; h.tick(); assert.equal(h.messages.at(-1).visible, true);
   expanded=true; h.tick(); assert.equal(h.messages.at(-1).eligible, false);
   assert.equal(h.messages.at(-1).visible, false);
@@ -184,4 +188,15 @@ test('earned ad-free time and fullscreen presentation suppress native slot eligi
   h.window.mediaManagerAdsSuppressed = true; h.tick();
   assert.equal(h.messages.at(-1).eligible, false); assert.equal(h.messages.at(-1).visible, false);
   h.window.mediaManagerAdsSuppressed = false; h.tick();assert.equal(h.messages.at(-1).visible,true);
+});
+
+for (const ios of [false,true]) test(`scroll clips only the visible ad portion on ${ios?'iOS':'Android'}`,()=>{
+  const h=harness({ios});
+  Object.assign(h.rect,{y:-100,top:-100,bottom:340});h.tick();
+  let m=h.messages.at(-1);assert.equal(m.visible,true);assert.equal(m.y,-100);
+  assert.equal(m.clipY,0);assert.equal(m.clipHeight,340);assert.equal(m.height,440);
+  Object.assign(h.rect,{y:-500,top:-500,bottom:-60});h.tick();
+  assert.equal(h.messages.at(-1).visible,false);
+  Object.assign(h.rect,{y:10,top:10,bottom:450});h.tick();
+  assert.equal(h.messages.at(-1).visible,true);assert.equal(h.messages.at(-1).clipHeight,440);
 });
